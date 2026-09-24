@@ -65,10 +65,10 @@ def validate_shape(data: Any) -> None:
         raise EvidenceError("invalid status")
     seen: set[tuple[str, int, int]] = set()
     spans: dict[str, list[tuple[int, int, str]]] = {}
-    for category, limit in (("primary", 3), ("related", 2)):
+    for category in ("primary", "related"):
         locations = data[category]
-        if not isinstance(locations, list) or len(locations) > limit:
-            raise EvidenceError(f"{category} must contain at most {limit} locations")
+        if not isinstance(locations, list):
+            raise EvidenceError(f"{category} must be an array")
         for item in locations:
             if not isinstance(item, dict) or set(item) != SITE_KEYS:
                 raise EvidenceError(f"location fields must be exactly {sorted(SITE_KEYS)}")
@@ -94,8 +94,8 @@ def validate_shape(data: Any) -> None:
                     raise EvidenceError(f"overlapping ranges: {path}; merge them")
             spans[path].append((start, end, digest))
     unresolved = data["unresolved"]
-    if not isinstance(unresolved, list) or len(unresolved) > 3:
-        raise EvidenceError("unresolved must be an array with at most 3 entries")
+    if not isinstance(unresolved, list):
+        raise EvidenceError("unresolved must be an array")
     for value in unresolved:
         _string(value, "unresolved", 200)
     if data["status"] == "ready":

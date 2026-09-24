@@ -119,10 +119,19 @@ class EvidenceTests(unittest.TestCase):
         self.data['related'] = [dict(self.site, path='src/four.py', start=1, end=1)]
         validate_shape(self.data)
 
-    def test_too_many_primaries(self):
-        self.data['primary'] = [dict(self.site, path=f'src/{i}.py') for i in range(4)]
-        with self.assertRaises(EvidenceError):
-            validate_shape(self.data)
+    def test_cross_file_handoff_returns_all_evidence_and_open_questions(self):
+        for i in range(8):
+            (self.root / f'src/{i}.py').write_bytes(self.raw)
+        refs = [dict(self.site, path=f'src/{i}.py') for i in range(8)]
+        self.data.update(status='partial', primary=refs[:4], related=refs[4:],
+                         unresolved=[f'Check caller {i}' for i in range(5)])
+        r = self.show()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        report = json.loads(r.stdout)
+        self.assertEqual(len(report['primary']) + len(report['related']), 8)
+        self.assertEqual(report['unresolved'], self.data['unresolved'])
+        self.assertTrue(all(ref['source'] == '1: def route(x):\n2:     return normalize(x)'
+                            for group in ('primary', 'related') for ref in report[group]))
 
     def test_duplicate_location(self):
         self.data['related'] = [dict(self.site)]

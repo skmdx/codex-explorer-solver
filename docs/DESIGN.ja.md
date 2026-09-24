@@ -25,6 +25,8 @@ python3 "$ES/locate.py" --repo . \
 
 `state-dir`はタスクの実行履歴を置く場所です。初回に自動作成され、追加調査でも同じ場所を使います。
 `out-dir`はその1回の結果を置く、新しいディレクトリです。どちらも対象リポジトリの外に置きます。
+複数の論点がある場合は、呼出し経路や資源の所有境界ごとに問いを分け、必要な呼出し元・先は同じ調査に含めます。
+見つかった根拠と未解決の問いは`partial`でも返せます。Codexが結果を統合し、不足分だけを追加調査します。
 
 | 調査方法 | 追加する引数 |
 |---|---|
@@ -32,7 +34,7 @@ python3 "$ES/locate.py" --repo . \
 | 指定ファイルの全文を読ませる（Reader） | `--mode reader --path src/login.py`。複数ファイルは`--path`を繰り返す |
 | Highモデルで検索する | `--deep`。Readerとは併用しない |
 | 未追跡ファイルも検索対象にする | `--include-untracked`。Gitのignore対象は含まない |
-| 実行期限を指定する | `--timeout 600`。省略時はAGYの標準期限を使う |
+| 実行期限を指定する | 例：`--timeout 900`。省略時は5分。長い横断調査では期限を明示する |
 
 Readerは`--scope`・`--include-untracked`と併用せず、明示したファイルだけを渡します。
 モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`--model`を使います。
@@ -61,6 +63,8 @@ python3 "$ES/budget.py" status --state-dir "$RUN/state"
 ```
 
 エラー時は返却JSONの`error`を確認し、追加情報が必要なら`metrics.json`を読みます。
+AGYは期限切れでも`SUCCESS`と空の結果を返すことがあります。構造化結果がなければ失敗として扱い、
+標準エラーの期限切れ理由も`error`へ返します。追加調査では問いの範囲と`--timeout`を見直します。
 起動設定や結果保存など、実行処理の外に出た例外は`invocation_failed`、使用量記録の失敗は`accounting_failed`です。
 CLIの引数構文エラーは標準エラー出力に返ります。
 `accounting_failed`でも検証済みの`evidence`は返るため、調査をやり直さず記録側の問題を解消します。
@@ -72,7 +76,8 @@ CLIの引数構文エラーは標準エラー出力に返ります。
 AGYの回答と保存するhandoffは`version: 2`です。状態は`ready`・`partial`・`not_found`・`blocked`、
 不足や障害の説明は`unresolved`にまとめます。各状態で必要な引用と説明は
 [回答スキーマ](../payload/.codex/es/agy-handoff.schema.json)に定義します。
-引用の行数・原文出力・handoffのバイト数に、スキーマ外の追加上限は設けません。
+引用箇所と未解決の問いの件数に固定上限はありません。検証に必要な範囲を重複なく返します。
+引用の行数・原文出力・handoffのバイト数に追加上限は設けません。
 
 [agy_snapshot.py](../payload/.codex/es/agy_snapshot.py)は、Git追跡済みファイルの現在の内容をコピーします。
 未コミットの変更も含みます。Readerでは指定したファイルを使います。
@@ -100,6 +105,7 @@ Codex側の待機方法は[SKILL.mdのWait for the result](../payload/.agents/sk
 シェルの待機更新を一つのcode-modeセル内で続け、空の進捗をモデルに返しません。
 既定の5分のAGY期限に対してセルは10分待ちます。長い期限を指定した場合は、セル側の待機も延ばします。
 ホストからセルが返された場合は、そのセルを待ち直します。無期限の完了通知ではありません。
+セルの待機を延長してもAGYの期限は変わりません。待機中にCodexが同じソースを先に読むことは避けます。
 
 ## 同時実行と使用量
 

@@ -147,7 +147,9 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                 f"AGY exited {process_code}; terminal status: {result.get('status') if result else 'missing'}")
         else:
             wire = result.get('structured_output')
-            if wire is None: raise EvidenceError('structured_output missing; no Markdown/free-text recovery')
+            if wire is None:
+                detail = (out/'stderr.log').read_text().strip()
+                raise EvidenceError(f'AGY ended after {elapsed:.1f}s without structured_output. {detail}'.strip())
             write_private(out/'raw-handoff.json',compact_json(wire)+'\n')
             snapshot.verify_export(root,out/'workspace',manifest)
             data = snapshot.bind_handoff(wire,manifest)

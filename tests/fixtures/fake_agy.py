@@ -61,6 +61,9 @@ if case=='bad_usage':usage['input_tokens']=True
 if case=='large_cache':usage['cache_read_tokens']=1000
 result={'conversation_id':'fixture-1','status':'SUCCESS','response':json.dumps(wire),'structured_output':wire,'num_turns':1,'usage':usage}
 if case=='missing_structured':del result['structured_output']
+if case=='native_timeout':
+    del result['structured_output'];result['response']=''
+    print('[agy] print timeout after 5m0s with turn in progress; returning partial output',file=sys.stderr)
 if case=='two_turns':result['num_turns']=2
 emit({'event':'result','result':result})
 if case=='nonzero_success':sys.exit(1)

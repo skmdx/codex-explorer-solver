@@ -54,8 +54,7 @@
           "evidence"
         ],
         "additionalProperties": false
-      },
-      "maxItems": 3
+      }
     },
     "related": {
       "type": "array",
@@ -95,8 +94,7 @@
           "evidence"
         ],
         "additionalProperties": false
-      },
-      "maxItems": 2
+      }
     },
     "unresolved": {
       "type": "array",
@@ -104,8 +102,7 @@
         "type": "string",
         "maxLength": 200,
         "minLength": 1
-      },
-      "maxItems": 3
+      }
     }
   },
   "required": [

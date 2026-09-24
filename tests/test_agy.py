@@ -209,6 +209,13 @@ class AgyRunnerTests(Fixture):
     def test_missing_schema_output_not_recovered_from_text(self):
         r=self.invoke('missing_structured');self.assertNotEqual(r.returncode,0)
         self.assertFalse((self.base/'run/handoff.json').exists())
+    def test_native_timeout_with_success_status_returns_cause_and_usage(self):
+        r=self.invoke('native_timeout');self.assertNotEqual(r.returncode,0)
+        report=json.loads(r.stdout)
+        self.assertIn('print timeout after 5m0s',report['error'])
+        self.assertEqual(report['usage']['total_tokens'],130)
+        self.assertIsNone(report['handoff_path'])
+        self.assertEqual(budget.status(self.state)['attempts'],1)
     def test_model_mismatch_rejected(self):
         r=self.invoke('bad_model');self.assertNotEqual(r.returncode,0);self.assertIn('model',self.metrics()['protocol_error'])
     def test_agent_mismatch_rejected(self):

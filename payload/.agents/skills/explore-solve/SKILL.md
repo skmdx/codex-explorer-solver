@@ -19,6 +19,11 @@ Use AGY to locate relevant ranges within large unread sources you would otherwis
 load in full; choose this before reading them. Also delegate when explicitly requested.
 Give the worker known findings and the unresolved question, not a repeat of completed
 investigation or the conversation.
+For a multi-part investigation, delegate a specific call chain or ownership boundary
+with a concrete question and completion criterion. Keep its necessary callers and
+callees together; integrate separate findings in Codex instead of asking each worker
+to perform the whole audit. Request `partial` with useful evidence when another
+independent question remains. A handoff can contain all necessary source locations.
 Recheck settled findings when source changes, evidence is missing, or an independent
 review is requested.
 
@@ -35,12 +40,15 @@ Explorer: use `--scope DIR` when known. It exports current Git-tracked UTF-8 sou
 `--include-untracked` adds non-ignored untracked files. Unexported areas were not inspected.
 Default workers use Gemini 3.8 Flash Medium; `--deep` selects High for exploration without requiring
 a previous worker. AGY calls/tool steps are unlimited, with one worker per STATE at a time.
-Unknown usage stays unknown and permits later calls. AGY's native timeout applies unless
-`--timeout` is set.
+Unknown usage stays unknown and permits later calls. AGY defaults to a five-minute
+deadline. For a long cross-module investigation, set a suitable `--timeout` in seconds
+(for example `--timeout 900`). Extending the enclosing cell does not extend AGY's deadline.
 
 ## Wait for the result
 
 Keep waiting inside one code-mode cell instead of returning empty status to the model.
+After starting AGY, wait for its result before doing further source investigation;
+otherwise Codex may read the same source that the worker is about to return.
 For AGY's default five-minute deadline, allow ten minutes for the enclosing cell.
 If an explicit worker deadline is longer, extend the enclosing wait accordingly.
 The shell session still needs internal wait calls; these do not require model turns.
