@@ -3,9 +3,11 @@ name: explore-solve
 description: Explicit source investigation with direct lookup or AGY evidence workers, exact-source verification, and compact command results.
 ---
 
-Codex owns implementation and verification. Use `ES=/home/user/codex-work/.codex/es`
-at the target Git repository root. Keep task/state/output directories under
-`/home/user/codex-work/tmp`, outside the repository; remove them after collecting evidence.
+Codex owns implementation and verification. Run commands at the target Git repository
+root. Set `ES=/home/user/codex-work/.codex/es` in each shell call that uses it; shell
+variables and `cd` do not persist between calls. Use absolute task/state/output paths under
+`/home/user/codex-work/tmp`, outside the repository. Retain STATE for the task's lifetime;
+clean up task directories at completion, after retaining needed evidence.
 
 ## Investigate
 
@@ -24,8 +26,9 @@ For this skill's Gemini investigation, use `locate.py` to retain usage tracking 
 source verification:
 `python3 "$ES/locate.py" --repo . --task-file TASK --state-dir STATE --out-dir AGY_RUN`
 
-Write the question and required evidence in TASK. STATE is created on first use;
-reuse it for the same task. AGY_RUN must be a new directory for each invocation.
+Create a task directory and write the question and required evidence in TASK inside it.
+STATE is created on first use; reuse it for the same task. Choose an unused AGY_RUN path
+for each invocation; let `locate.py` create it instead of precreating it with `mkdir`/`mktemp`.
 Reader: `--mode reader --path FILE` (repeat paths) sends the specified files, including
 explicit untracked files; do not combine it with `--deep`, `--scope`, or `--include-untracked`.
 Explorer: use `--scope DIR` when known. It exports current Git-tracked UTF-8 source;
@@ -41,10 +44,12 @@ Keep waiting inside one code-mode cell instead of returning empty status to the 
 For AGY's default five-minute deadline, allow ten minutes for the enclosing cell.
 If an explicit worker deadline is longer, extend the enclosing wait accordingly.
 The shell session still needs internal wait calls; these do not require model turns.
+In the example, COMMAND is the complete shell command (including ES if used), and
+REPO is the absolute target Git root. Substitute both before executing the cell.
 
 ```javascript
 // @exec: {"yield_time_ms": 600000, "max_output_tokens": 5000}
-let r = await tools.exec_command({cmd: COMMAND, yield_time_ms: 30000, max_output_tokens: 5000});
+let r = await tools.exec_command({cmd: COMMAND, workdir: REPO, yield_time_ms: 30000, max_output_tokens: 5000});
 const output = [r.output];
 while (r.session_id !== undefined) {
   r = await tools.write_stdin({session_id: r.session_id, chars: "", yield_time_ms: 30000, max_output_tokens: 5000});
@@ -58,8 +63,10 @@ wait duration; do not start another shell poll or inspect logs for progress.
 
 ## Verify and implement
 
-Successful `locate.py` output includes `evidence`: hash-verified, numbered originals
-for all cited ranges, plus unresolved questions. Use those originals directly;
+Exit zero from `locate.py` means a validated report, not completion of the task.
+Read `handoff_status` and unresolved questions: `partial`/`blocked` may need follow-up,
+and `not_found` applies only to the exported scope. Its `evidence` includes hash-verified,
+numbered originals for cited ranges. Use those originals directly;
 retrieve only missing callers/contracts or ranges needed for editing. Hashes establish
 identity, not semantic relevance. Do not fetch the same unchanged source again just
 because a handoff was saved. Re-read when it changed or is no longer available in context.
@@ -69,11 +76,12 @@ If all cited originals are missing from context, retrieve them together with
 `python3 "$ES/evidence.py" show --root . --handoff HANDOFF`.
 If tool output was truncated, recover missing source from the saved result
 instead of rerunning AGY. Resolve remaining questions without repeating completed work.
-On worker failure, use concise metrics to choose a targeted retry or local investigation.
+On failure, read the returned error first, then `metrics_path` if supplied, to choose
+a targeted retry or local investigation. Setup failures can return stderr without metrics.
 
 For tests/builds with large output:
 `python3 "$ES/capture.py" --repo . --out-dir TEST_RUN -- COMMAND ARGS`
-Use a new TEST_RUN, separate from AGY_RUN. Capture stops at 300 seconds or 16 MiB of logs
+TEST_RUN must not exist and must differ from AGY_RUN. Capture stops at 300 seconds or 16 MiB of logs
 by default; raise `--timeout` / `--log-limit-bytes` for longer or noisier commands.
 This returns exit code, exact short tails and full log paths. Check the actual test/build
 result; use saved log ranges for missing details instead of rerunning. Small reads/searches

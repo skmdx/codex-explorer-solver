@@ -2,7 +2,7 @@
 d6aa374ba9749e3fecf57ff5dae2c4dc200eac87df6f16465b6daea777de85cd  docs/DESIGN.ja.md
 4850234d7c76c614760cfbb818395ef49eb4bd2742cc29c8421014362082abf4  install.py
 4935a52dcb32c71df5a426fe08e45953ff34d1887124554f642c0c8b56b0e080  legacy-payload-sha256.json
-c65049b723836f8d214b45c9b95a3b674dabaacc7eb6874ea96226cfd5f205d4  payload/.agents/skills/explore-solve/SKILL.md
+bba9797d89ffd0a77272ad66503270cd1115bae0c96b6ad028cebb291f3c3059  payload/.agents/skills/explore-solve/SKILL.md
 63a36bcc924bc22cbf0d7bdf98055a999ff5249a07177752f22f56c7ccb81c5b  payload/.agents/skills/explore-solve/agents/openai.yaml
 f0277764b0792598d7cc265e2213eae8de125edcd159d624600a61167df32c8e  payload/.codex/es/agy-handoff.schema.json
 e91b626d164b6e65bac7f427e0537e719cbb0c88561867017122f550cf71898b  payload/.codex/es/agy.toml
