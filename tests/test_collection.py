@@ -75,6 +75,10 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('source',result['locations'][0])
         run=Path(result['run_dir'])
         request=(run/'request.jsonl').read_text()
+        metrics=json.loads((run/'metrics.json').read_text())
+        self.assertEqual(metrics['timeout_seconds'],1800)
+        argv=metrics['argv']
+        self.assertEqual(argv[argv.index('--print-timeout')+1],'1800s')
         self.assertIn('unsupported',request)
         self.assertIn('The source is src/example.py.',request)
         full=read_evidence(str(run),[1])
@@ -98,6 +102,8 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         async with stdio_client(params) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
+                schema=next(t.inputSchema for t in (await session.list_tools()).tools if t.name=='collect')
+                self.assertNotIn('timeout',schema['properties'])
                 result=await session.call_tool('collect',dict(repo=str(self.repo),
                     question='Where is f?',evidence_needed=['definition'],scratch_dir=str(self.base),
                     scope=['src/**/*.py'],navigation=None,known_findings=''))
@@ -117,7 +123,8 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_deadline_returns_failure_and_finalizes_usage(self):
         os.environ['FAKE_CASE']='timeout'
-        result=await self.run_collection(timeout=0.2)
+        with patch.dict('server.CONFIG',collection_timeout_seconds=0.2):
+            result=await self.run_collection()
         self.assertNotEqual(result['status'],'validated')
         self.assertEqual(result['locations'],[])
         metrics=json.loads((Path(result['run_dir'])/'metrics.json').read_text())

@@ -16,7 +16,10 @@ source and callers; split only when they need different source areas. There is n
 fixed limit on AGY calls or internal tool steps.
 
 For AGY, use the plugin's `collect` MCP tool. It waits for the result inside one call.
-If the host yields a code-mode cell, wait on that same cell without restarting collection.
+In code mode, start that cell with `// @exec: {"yield_time_ms": 3600000, "max_output_tokens": 4000}`
+on its first line so the outer cell also waits for completion.
+If the host still yields, resume the same cell with `yield_time_ms: 3600000`.
+The collection deadline comes from `agy.toml`; it is separate from the cell's observation wait.
 Give the next decision and the missing code facts separately.
 Reuse known findings; reopen settled questions only for a source change, new failure, or counterexample.
 If known Symbols locations can seed the search, pass their results directly to

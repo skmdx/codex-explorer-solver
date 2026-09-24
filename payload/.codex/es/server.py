@@ -11,6 +11,7 @@ from pathlib import Path
 import signal
 import sys
 import tempfile
+import tomllib
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -18,6 +19,7 @@ from mcp.types import ToolAnnotations
 from evidence import format_evidence, load_handoff, verify_handoff
 
 HERE = Path(__file__).resolve().parent
+CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
 mcp = FastMCP("explore-solve")
 
 
@@ -43,7 +45,7 @@ def catalog(run: Path) -> dict:
 async def collect(
     repo: str, question: str, evidence_needed: list[str], scratch_dir: str,
     scope: list[str], navigation: dict | None,
-    known_findings: str, timeout: float = 900,
+    known_findings: str,
     paths: list[str] | None = None, include_untracked: bool = False,
     model: str | None = None, deep: bool = False,
     encodings: dict[str, str] | None = None,
@@ -51,6 +53,11 @@ async def collect(
     """Collect missing source evidence through Gemini High and wait for completion.
 
     One call includes the entire wait; no polling or background process management.
+    In code mode, start the exec cell with this pragma on its first line:
+    // @exec: {"yield_time_ms": 3600000, "max_output_tokens": 4000}
+    This keeps the outer cell waiting too. If it still yields, resume that same
+    cell with yield_time_ms=3600000 rather than repeated short waits.
+    The collection deadline is set in agy.toml, not selected per tool call.
     question is the next Solver decision, evidence_needed names the code facts
     needed for it (definitions, conditions, updates, callers), not a whole issue.
     Pass known Symbols results directly as navigation={root: LSP workspacePath,
@@ -85,7 +92,7 @@ async def collect(
                     'Do not collect whole functions unless needed for the facts.\n')
     argv = [sys.executable, str(HERE/'locate.py'), '--repo', str(root),
             '--task-file', str(task), '--state-dir', str(work/'state'),
-            '--out-dir', str(run), '--timeout', str(timeout)]
+            '--out-dir', str(run), '--timeout', str(CONFIG['collection_timeout_seconds'])]
     for path in scope:
         argv.extend(['--scope',path])
     if paths is not None:

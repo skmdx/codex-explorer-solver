@@ -5,9 +5,10 @@ question and the needed conditions, updates or callers separately; do not ask it
 to solve an entire issue or find design flaws. Group facts sharing a source path.
 Existing conclusions belong in `known_findings`, not in another broad investigation.
 
-The MCP call waits for completion. It does not return a running job to poll. If the
-host yields a code-mode cell, resume that same cell; do not restart or kill AGY
-because an observation wait expired. `timeout` is the collection deadline in seconds.
+The MCP call waits for completion. The outer code-mode cell must also use the long
+wait shown below. If it still yields, resume the same cell with `yield_time_ms: 3600000`.
+An observation wait expiring does not stop AGY or justify restarting it.
+The collection deadline is configured in `agy.toml`, not passed by the Solver.
 
 ## Known symbol → LSP → AGY, in one cell
 
@@ -20,7 +21,7 @@ Replace the example paths, position and question. `navigation.root` is the Symbo
 profile's workspacePath; it may be above the repository. Positions are 1-based.
 
 ```javascript
-// @exec: {"yield_time_ms": 1200000, "max_output_tokens": 4000}
+// @exec: {"yield_time_ms": 3600000, "max_output_tokens": 4000}
 const args = {file: "/absolute/repo/src/file.c", line: 120, character: 5};
 const results = await Promise.allSettled([tools.mcp__language_servers__references(args)]);
 const r = results[0];

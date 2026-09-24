@@ -14,7 +14,8 @@ MCP呼出しの取消時はrunnerへSIGINTを送り、AGYの子プロセスを�
 
 ## 切り詰め時の案内
 
-[hooks/hooks.json](../hooks/hooks.json)の`PostToolUse`から[truncation_hint.py](../payload/.codex/es/truncation_hint.py)を呼びます。
+[hooks/hooks.json](../hooks/hooks.json)の`PostToolUse`に案内処理を同梱しています。
+コマンド文字列だけで実行できるため、更新で旧プラグインキャッシュが削除されても、読込み済みhookは動作します。
 シェルのツール結果にある`…N tokens truncated…`または`…N chars truncated…`を検出し、
 `additionalContext`へ短い英語の案内を返します。大量出力であるだけでは発火しません。
 案内は取得範囲・方法の見直しを促し、広範なソース調査や大量の試験出力ではスキルを選択肢として示します。
@@ -35,7 +36,6 @@ hookへ渡った結果を対象にするため、その後の外側のコード�
 | 指定ファイルの全文を読ませる（Reader） | `paths: [".git/hooks/pre-commit"]`。`scope: []`, `navigation: null`を指定 |
 | `deep_model`で検索する | `deep: true`。既定値は通常と同じHigh。Readerとは併用しない |
 | 未追跡ファイルも検索対象にする | `include_untracked: true`。Gitのignore対象は含まない |
-| 実行期限を指定する | `timeout: 900`（既定値、秒） |
 
 `scope`はリポジトリ相対で、複数指定は和集合です。`*`・`?`・`[abc]`は`/`をまたがず、
 `**/`は0階層以上に一致します。`src/*.c`は直下、`src/**/*.c`は直下と子ディレクトリのCファイルが対象です。
@@ -43,6 +43,10 @@ Gitのglob照合を使い、ドットで始まる名前も対象です。ファ�
 `[]`または`["."]`はパスの絞り込みなしです。追跡・未追跡ファイルの選択規則はglobでも変わりません。
 Readerは明示したファイルだけを渡し、`include_untracked`とは併用しません。
 モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`model`を使います。
+収集期限は同ファイルの`collection_timeout_seconds`（既定1800秒＝30分）で設定します。
+MCP引数には公開せず、Solverが呼出しごとに短縮する経路をなくしています。
+コード実行セルは先頭のpragmaで`yield_time_ms: 3600000`を指定します。これは収集期限とは別の観測待ちです。
+ホストが先にセルを返す場合も、同じセルを同じ待機時間で再開します。
 `locate.py`はMCPサーバーが起動する内部ワーカーです。個別プロセスにすることで取消時にSIGINTを送り、
 既存の収集終了処理とAGY子プロセスの後片付けを実行します。
 
@@ -83,7 +87,7 @@ Geminiは足りない条件・呼出し・テストを追加探索します。�
 原文は同じID選択で`read_evidence`を繰り返すと続きから取得できます。取得時に現在のソースと再照合します。
 エラー時は`error`を確認し、追加情報が必要なら`metrics.json`を読みます。
 AGYは期限切れでも`SUCCESS`と空の結果を返すことがあります。構造化結果がなければ失敗として扱い、
-標準エラーの期限切れ理由も`error`へ返します。追加調査では問いの範囲と`timeout`を見直します。
+標準エラーの期限切れ理由も`error`へ返します。収集期限の変更は`agy.toml`で行います。
 起動設定や結果保存など、実行処理の外に出た例外は`invocation_failed`、使用量記録の失敗は`accounting_failed`です。
 `accounting_failed`でも検証済みの`evidence`は返るため、調査をやり直さず記録側の問題を解消します。
 ソースが変わっていた場合は、その結果を編集の根拠にせず現在の原文を確認します。
