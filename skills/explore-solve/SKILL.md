@@ -1,6 +1,6 @@
 ---
 name: explore-solve
-description: Source investigation with direct lookup or AGY source collection, verified originals, and compact command results.
+description: Collect missing source evidence when investigation spans unread definitions, callers, conditions, or tests across multiple files; capture large build/test output for focused inspection. Small questions and known source locations can use direct lookup.
 ---
 
 Codex is the Solver: it evaluates guarantees, constructs race scenarios, chooses fixes,

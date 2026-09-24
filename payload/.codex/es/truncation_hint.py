@@ -6,9 +6,10 @@ import re
 import sys
 
 HINT = (
-    'Output was truncated. Reconsider the scope or method of your next retrieval. '
-    'For broad searches through unread source or large build/test output, consider '
-    'using the codex-explorer-solver:explore-solve skill.'
+    'Output was truncated. If further investigation spans multiple source files, '
+    'consider codex-explorer-solver:explore-solve to collect only the missing evidence. '
+    'For a known location, a targeted read or a larger output limit may suffice. '
+    'For build/test output, prefer an existing saved log or the skill’s capture tool.'
 )
 TRUNCATION = re.compile(r'…\d+ (?:tokens|chars) truncated…')
 
