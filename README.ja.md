@@ -4,12 +4,15 @@
 
 共通本体は `tools/codex-explorer-solver/payload/.codex/es`、入口は
 `/home/user/codex-work/.codex/es`。`explore-solve` はユーザースキルとして登録し、
-各Gitリポジトリで明示的に呼び出す。Hooksはユーザー設定から読み込み、
-`/home/user/codex-work` 以下でのみ動作する。親ワークスペースのスキル・Hooksは
+各Gitリポジトリで明示的に呼び出す。親ワークスペースのスキル・Hooksは
 子Gitリポジトリから自動検出されないため、この配置を使う。
 
+自動Hooksは実機で登録・信頼・出力保存まで確認したが、code modeが原文を
+親へ再表示するため登録を解除した。大量出力には同梱の `capture.py` を明示的に使う。
+既定のスキル動作は明示呼出しのみで、自動委譲は有効にしていない。
+
 AGY起動にはソースexportを `--add-dir` で渡す。2026-09-24のAGY 1.2.0では、
-Readerの制限定義を検出してもinitが全ツールを通知し、能力チェックで停止する。
+Reader/Explorerの制限定義を検出してもinitが全ツールを通知し、能力チェックで停止する。
 チェックを緩めた代替起動は用意していない。実機の使用量・成立条件は
 `/home/user/codex-work/note/codex-explorer-solver/20260924/` の測定記録を参照。
 
