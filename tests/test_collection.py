@@ -89,6 +89,10 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(''.join(parts),full['text'])
 
     async def test_mcp_transport_returns_index_and_selected_source_once(self):
+        (self.repo/'src/nested').mkdir()
+        (self.repo/'src/nested/other.py').write_text('other = 1\n')
+        (self.repo/'src/notes.txt').write_text('not selected\n')
+        subprocess.run(['git','-C',str(self.repo),'add','src'],check=True)
         params=StdioServerParameters(command=sys.executable,
                     args=[str(KIT/'payload/.codex/es/server.py')],env=dict(os.environ))
         async with stdio_client(params) as (read,write):
@@ -96,10 +100,14 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 await session.initialize()
                 result=await session.call_tool('collect',dict(repo=str(self.repo),
                     question='Where is f?',evidence_needed=['definition'],scratch_dir=str(self.base),
-                    scope=['src'],navigation=None,known_findings=''))
+                    scope=['src/**/*.py'],navigation=None,known_findings=''))
                 self.assertFalse(result.isError)
                 self.assertIsNone(result.structuredContent)
                 index=json.loads(result.content[0].text)
+                manifest=json.loads((Path(index['run_dir'])/'source-manifest.json').read_text())
+                self.assertEqual(manifest['scopes'],['src/**/*.py'])
+                self.assertEqual([e['path'] for e in manifest['files']],
+                                 ['src/example.py','src/nested/other.py'])
                 args=dict(run_dir=index['run_dir'],ids=[1])
                 source=await session.call_tool('read_evidence',args)
                 self.assertFalse(source.isError)

@@ -159,8 +159,43 @@ class SnapshotTests(Fixture):
         (self.repo/'src/link.py').symlink_to('../credentials.json')
         m=self.export(mode='reader',paths=['src/link.py'])
         self.assertEqual((self.base/'workspace'/m['files'][0]['export_path']).read_text(),'private')
-    def test_scope_is_literal_not_git_pathspec(self):
+    def test_scope_exact_file(self):
         m=self.export(scopes=['src/example.py']);self.assertEqual(m['file_count'],1)
+    def test_scope_globs_select_exported_files(self):
+        added=['root.c','src/a.c','src/b.h','src/.hidden.c','src/nested/c.c',
+               'src/nested/deep/d.c','tests/t.c','src/space name.c']
+        for name in added:
+            p=self.repo/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('source\n')
+        subprocess.run(['git','-C',str(self.repo),'add','.'],check=True)
+        all_files=set(added+['src/example.py','src/other.py'])
+        cases=[
+            (['src/*.c'],{'src/a.c','src/.hidden.c','src/space name.c'}),
+            (['src/**/*.c'],{p for p in all_files if p.startswith('src/') and p.endswith('.c')}),
+            (['**/*.c'],{p for p in all_files if p.endswith('.c')}),
+            (['src/?.[ch]'],{'src/a.c','src/b.h'}),
+            (['src/[ab].*'],{'src/a.c','src/b.h'}),
+            (['src/space*.c'],{'src/space name.c'}),
+            (['src/nested'],{'src/nested/c.c','src/nested/deep/d.c'}),
+            (['src/a.c','tests/*.c','src/?.c'],{'src/a.c','tests/t.c'}),
+            (['missing/*.c','src/a.c'],{'src/a.c'}),
+            ([],all_files),(['.'],all_files),
+        ]
+        for i,(scopes,expected) in enumerate(cases):
+            with self.subTest(scopes=scopes):
+                out=self.base/f'export-{i}'
+                m=snap.export(self.repo,out,mode='localize',paths=[],scopes=scopes,
+                              include_untracked=False,encodings={})
+                self.assertEqual({e['path'] for e in m['files']},expected)
+                self.assertEqual({str(p.relative_to(out)) for p in out.rglob('*') if p.is_file()},expected)
+    def test_scope_glob_no_matches(self):
+        with self.assertRaisesRegex(EvidenceError,'no eligible source files'):
+            self.export(scopes=['missing/**/*.py'])
+    def test_scope_glob_untracked_respects_gitignore(self):
+        (self.repo/'src/new.py').write_text('new\n')
+        (self.repo/'src/ignored.py').write_text('ignored\n')
+        (self.repo/'.gitignore').write_text('src/ignored.py\n')
+        m=self.export(scopes=['src/**/*.py'],include_untracked=True)
+        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py','src/new.py'})
     def test_invalid_scope_refused(self):
         with self.assertRaises(EvidenceError):self.export(scopes=['../secret'])
     def test_negative_finding_invalidated_by_uncited_file_change(self):

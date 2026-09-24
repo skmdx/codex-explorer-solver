@@ -31,11 +31,16 @@ hookへ渡った結果を対象にするため、その後の外側のコード�
 | 調査方法 | `collect`の引数 |
 |---|---|
 | ディレクトリを絞って検索する | `scope: ["src", "tests"]` |
+| globでファイルを選ぶ | `scope: ["src/**/*.c", "tests/test_?.py"]` |
 | 指定ファイルの全文を読ませる（Reader） | `paths: [".git/hooks/pre-commit"]`。`scope: []`, `navigation: null`を指定 |
 | `deep_model`で検索する | `deep: true`。既定値は通常と同じHigh。Readerとは併用しない |
 | 未追跡ファイルも検索対象にする | `include_untracked: true`。Gitのignore対象は含まない |
 | 実行期限を指定する | `timeout: 900`（既定値、秒） |
 
+`scope`はリポジトリ相対で、複数指定は和集合です。`*`・`?`・`[abc]`は`/`をまたがず、
+`**/`は0階層以上に一致します。`src/*.c`は直下、`src/**/*.c`は直下と子ディレクトリのCファイルが対象です。
+Gitのglob照合を使い、ドットで始まる名前も対象です。ファイル・ディレクトリ名の直接指定も使えます。
+`[]`または`["."]`はパスの絞り込みなしです。追跡・未追跡ファイルの選択規則はglobでも変わりません。
 Readerは明示したファイルだけを渡し、`include_untracked`とは併用しません。
 モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`model`を使います。
 `locate.py`はMCPサーバーが起動する内部ワーカーです。個別プロセスにすることで取消時にSIGINTを送り、

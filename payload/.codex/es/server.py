@@ -55,7 +55,9 @@ async def collect(
     needed for it (definitions, conditions, updates, callers), not a whole issue.
     Pass known Symbols results directly as navigation={root: LSP workspacePath,
     queries: [{tool, args, result/error}]}. Do not print/transcribe them first.
-    scope selects repository-relative files/directories, not a limit on LSP hits.
+    scope selects repository-relative files/directories or globs (e.g. src/**/*.c).
+    * and ? stay within a path component; ** spans directories. [] selects all.
+    These are source export patterns, not a limit on LSP hits.
     scratch_dir is an existing absolute temporary directory outside repo.
     Returns an index without source dumps. Use read_evidence for selected IDs.
     Use navigation=null only when there is no useful symbol seed. known_findings

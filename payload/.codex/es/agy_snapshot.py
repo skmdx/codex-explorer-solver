@@ -18,22 +18,20 @@ def safe_relative(name: str) -> str:
     return str(p)
 
 
-def git_paths(root: Path, include_untracked: bool = False) -> list[str]:
+def git_paths(root: Path, scopes: list[str], include_untracked: bool = False) -> list[str]:
     command = ['git', '-C', str(root), 'ls-files', '-z', '--cached']
     if include_untracked:
         command += ['--others', '--exclude-standard']
+    if scopes and '.' not in scopes:
+        command += ['--', *(f':(top,glob){scope}' for scope in scopes)]
     env = os.environ.copy(); env['GIT_OPTIONAL_LOCKS'] = '0'
     result = subprocess.run(command, capture_output=True, env=env)
     if result.returncode:
-        raise EvidenceError('git ls-files failed; initialize/open a real Git repository')
+        raise EvidenceError('git ls-files failed: ' + result.stderr.decode('utf-8', errors='replace').strip())
     try:
         return sorted(set(x.decode('utf-8') for x in result.stdout.split(b'\0') if x))
     except UnicodeError as exc:
         raise EvidenceError('non-UTF-8 Git filenames are unsupported') from exc
-
-
-def in_scope(name: str, scopes: list[str]) -> bool:
-    return not scopes or any(s == '.' or name == s or name.startswith(s + '/') for s in scopes)
 
 
 def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
@@ -45,7 +43,7 @@ def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
             raise EvidenceError('reader requires explicit --path(s)')
         candidates = list(dict.fromkeys(paths))
     else:
-        candidates = [x for x in git_paths(root, include_untracked) if in_scope(x, scopes)]
+        candidates = git_paths(root, scopes, include_untracked)
     entries = []; skipped = []; total = 0
     # The private output directory is created by the runner; workspace is new.
     workspace.mkdir(mode=0o700, exist_ok=False)

@@ -240,7 +240,7 @@ def main() -> int:
     parser.add_argument('--state-dir',type=Path,help='per-task usage ledger; created on first invocation, reused thereafter')
     parser.add_argument('--mode',choices=['localize','reader'],default='localize')
     parser.add_argument('--path',action='append',default=[],help='reader input file, repeatable')
-    parser.add_argument('--scope',action='append',default=[],help='localize export file/directory, repeatable')
+    parser.add_argument('--scope',action='append',default=[],help='repository-relative file/directory or glob (quote shell wildcards), repeatable')
     parser.add_argument('--encoding',action='append',default=[],metavar='PATH=CODEC',
                         help='override automatic source encoding detection for a file, repeatable')
     parser.add_argument('--include-untracked',action='store_true',help='include non-ignored untracked files; review export disclosure')

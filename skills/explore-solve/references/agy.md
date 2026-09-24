@@ -38,6 +38,8 @@ Do not print LSP results before the collection call. They go straight into its
 initial prompt. Errors remain unavailable results, not empty reference lists.
 `scope` covers the question's source area; LSP hits are starting points, not an
 exhaustive export filter. Without a useful symbol seed, pass `navigation: null`.
+Scopes are repository-relative files, directories, or globs: `src/*.c` selects direct
+children; `src/**/*.c` also includes nested files. Multiple patterns are combined.
 Use an empty `known_findings` only for a new investigation.
 
 ## Read only needed originals
