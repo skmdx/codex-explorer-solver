@@ -45,10 +45,12 @@ class SourceGatewayTests(unittest.TestCase):
     def test_literal_not_regex(self):
         r=gateway.search(self.root,['a.py'],'.*')
         self.assertEqual(r['total_matches_in_scope'],0)
-    def test_duplicate_paths_rejected(self):
-        with self.assertRaises(EvidenceError):gateway.corpus(self.root,['a.py','a.py'])
-    def test_invalid_offset(self):
-        with self.assertRaises(EvidenceError):gateway.search(self.root,['a.py'],'foo',offset=50)
+    def test_duplicate_paths_scanned_once(self):
+        r=gateway.search(self.root,['a.py','a.py'],'foo')
+        self.assertEqual(r['scanned_files'],1);self.assertEqual(r['total_matches_in_scope'],3)
+    def test_offset_past_end_returns_empty_page(self):
+        r=gateway.search(self.root,['a.py'],'foo',offset=1000001)
+        self.assertEqual(r['locations'],[]);self.assertIsNone(r['next_offset'])
     def test_single_giant_line_is_not_a_small_read(self):
         (self.root/'big.py').write_text('x'*13000)
         r=gateway.inspect(self.root,['big.py'],'lookup')
@@ -60,13 +62,24 @@ class SourceGatewayTests(unittest.TestCase):
         text,manifest=gateway.reader_snapshot(self.root,['a.py'])
         self.assertIn('1: foo',text)
         self.assertEqual(manifest[0]['sha256'],hashlib.sha256((self.root/'a.py').read_bytes()).hexdigest())
-    def test_reader_corpus_size_refuses_not_truncates(self):
-        (self.root/'big.py').write_text('x'*65537)
-        with self.assertRaises(EvidenceError):gateway.reader_snapshot(self.root,['big.py'])
-    def test_symlink_alias_to_credentials_refused(self):
+    def test_large_reader_corpus_is_not_truncated(self):
+        source='x'*(3*1024*1024)
+        (self.root/'big.py').write_text(source)
+        text,_=gateway.reader_snapshot(self.root,['big.py'])
+        self.assertEqual(json.loads(text)['files'][0]['source'],'1: '+source)
+    def test_search_accepts_requested_page_size_and_many_files(self):
+        paths=[]
+        literal='x'*1200
+        for i in range(15):
+            name=f'source{i}.py';(self.root/name).write_text((literal+'\n')*5);paths.append(name)
+        r=gateway.search(self.root,paths,literal,max_results=70)
+        self.assertEqual(len(r['locations']),70);self.assertEqual(r['next_offset'],70)
+        t=gateway.search(self.root,paths,literal,offset=70,expected_snapshot=r['snapshot_sha256'])
+        self.assertEqual(len(t['locations']),5);self.assertTrue(t['complete_page'])
+    def test_explicit_symlink_alias_to_config(self):
         (self.root/'.env').write_text('secret')
         (self.root/'alias.py').symlink_to(self.root/'.env')
-        with self.assertRaises(EvidenceError):source_path(self.root,'alias.py')
+        self.assertEqual(source_path(self.root,'alias.py'),self.root/'.env')
 
 
 class ReadGuardTests(unittest.TestCase):
@@ -134,9 +147,11 @@ class BudgetTests(unittest.TestCase):
     def tearDown(self):self.temp.cleanup()
     def reserve(self,role='repo_explorer'):return budget.reserve(self.state,self.root,role,b'question')
     def finish(self,job,tokens=100,complete=True):budget.finish(self.state,job,dict(status='done',usage_complete=complete,usage={'total_tokens':tokens}))
-    def test_second_concurrent_worker_rejected(self):
+    def test_unfinished_record_does_not_block_next_worker(self):
         self.reserve()
-        with self.assertRaisesRegex(EvidenceError,'already'):self.reserve()
+        self.finish(self.reserve())
+        self.assertEqual(budget.status(self.state)['attempts'],2)
+        self.assertIsNone(budget.status(self.state)['total_worker_tokens'])
     def test_failed_attempt_still_counts(self):
         j=self.reserve();budget.finish(self.state,j,dict(status='invalid_json',usage_complete=True,usage={'total_tokens':100}))
         self.finish(self.reserve())
@@ -165,7 +180,8 @@ class BudgetTests(unittest.TestCase):
             try:return self.reserve()
             except EvidenceError:return None
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:jobs=list(ex.map(f,range(4)))
-        self.assertEqual(sum(x is not None for x in jobs),1)
+        self.assertEqual(len(set(jobs)),4)
+        self.assertNotIn(None,jobs)
     def test_existing_limits_no_longer_restrict_admission(self):
         with budget.connect(self.state) as c:
             policy=json.loads(c.execute('SELECT data FROM policy').fetchone()[0])
@@ -207,6 +223,9 @@ class CaptureTests(unittest.TestCase):
     def test_timeout_is_nonzero(self):
         r,code=capture(self.root,self.base/'run',[sys.executable,'-c','import time;time.sleep(10)'],timeout=0.1)
         self.assertEqual(code,124);self.assertEqual(r['termination_reason'],'local_deadline')
+    def test_explicit_log_limit_stops_command(self):
+        r,code=capture(self.root,self.base/'run',[sys.executable,'-c',"import sys,time;sys.stdout.write('x'*2048);sys.stdout.flush();time.sleep(10)"],log_limit=1024)
+        self.assertEqual(code,125);self.assertEqual(r['termination_reason'],'log_budget')
     def test_binary_preview_not_fabricated_unicode(self):
         r,_=capture(self.root,self.base/'run',[sys.executable,'-c',"import sys;sys.stdout.buffer.write(b'\\xff\\xfe')"])
         self.assertIsNone(r['stdout']['tail'])

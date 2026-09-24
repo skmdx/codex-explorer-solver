@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded disposable source export; no code executes and no model is called.
-
-The export is NOT an OS sandbox. It omits user/project agent configurations and
-credential-like paths; filename filtering is NOT a complete secret detector.
-"""
+"""Export selected text sources separately from the AGY runtime configuration."""
 from __future__ import annotations
 import hashlib
 import json
@@ -13,32 +9,13 @@ import subprocess
 from typing import Any
 from evidence import EvidenceError, compact_json, source_bytes, source_path, load_handoff
 
-EXCLUDED_DIRS = {'.git', '.ssh', '.aws', 'node_modules', '.venv', '__pycache__'}
-ROOT_AGENT_DIRS = {'.agents', '.codex', '.gemini', '.agent', '.claude'}
-ROOT_AGENT_FILES = {'agents.md', 'gemini.md', 'claude.md'}
-EXCLUDED_NAMES = {'.npmrc', '.pypirc',
-                  'credentials.json', 'credentials', 'id_rsa', 'id_ed25519'}
-
-
 def safe_relative(name: str) -> str:
-    if not isinstance(name, str) or not name or len(name) > 400:
+    if not isinstance(name, str) or not name:
         raise EvidenceError('invalid source path')
     p = PurePosixPath(name)
-    if p.is_absolute() or '..' in p.parts or str(p) != name or name == '.' \
-            or '\\' in name or ':' in name or any(ord(c) < 32 for c in name):
-        raise EvidenceError('source path must be normalized repository-relative POSIX')
-    return name
-
-
-def exclusion(name: str) -> str | None:
-    p = PurePosixPath(safe_relative(name))
-    if p.parts[0].lower() in ROOT_AGENT_DIRS or (len(p.parts)==1 and p.name.lower() in ROOT_AGENT_FILES):
-        return 'active_agent_configuration'
-    if {x.lower() for x in p.parts} & {x.lower() for x in EXCLUDED_DIRS} or p.name.lower() in {x.lower() for x in EXCLUDED_NAMES}:
-        return 'configuration_or_generated_or_credential_path'
-    if p.name.startswith('.env') or p.suffix.lower() in {'.pem', '.key', '.p12', '.pfx', '.keystore'}:
-        return 'credential_like_path'
-    return None
+    if p.is_absolute() or '..' in p.parts:
+        raise EvidenceError('scope must be relative to the repository')
+    return str(p)
 
 
 def git_paths(root: Path, include_untracked: bool = False) -> list[str]:
@@ -46,11 +23,9 @@ def git_paths(root: Path, include_untracked: bool = False) -> list[str]:
     if include_untracked:
         command += ['--others', '--exclude-standard']
     env = os.environ.copy(); env['GIT_OPTIONAL_LOCKS'] = '0'
-    result = subprocess.run(command, capture_output=True, timeout=20, env=env)
+    result = subprocess.run(command, capture_output=True, env=env)
     if result.returncode:
         raise EvidenceError('git ls-files failed; initialize/open a real Git repository')
-    if len(result.stdout) > 16*1024*1024:
-        raise EvidenceError('Git file listing too large; use a smaller worktree')
     try:
         return sorted(set(x.decode('utf-8') for x in result.stdout.split(b'\0') if x))
     except UnicodeError as exc:
@@ -58,52 +33,54 @@ def git_paths(root: Path, include_untracked: bool = False) -> list[str]:
 
 
 def in_scope(name: str, scopes: list[str]) -> bool:
-    return not scopes or any(name == s or name.startswith(s + '/') for s in scopes)
+    return not scopes or any(s == '.' or name == s or name.startswith(s + '/') for s in scopes)
 
 
 def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
-           scopes: list[str], include_untracked: bool) -> dict:
+           scopes: list[str], include_untracked: bool, encodings: dict[str, str]) -> dict:
     """Export current worktree bytes, NOT committed Git blobs. No silent cap truncation."""
-    for scope in scopes: safe_relative(scope)
+    scopes = [safe_relative(scope) for scope in scopes]
     if mode == 'reader':
         if not paths:
             raise EvidenceError('reader requires explicit --path(s)')
-        if len(paths) != len(set(paths)):
-            raise EvidenceError('duplicate reader input')
-        candidates = paths
+        candidates = list(dict.fromkeys(paths))
     else:
         candidates = [x for x in git_paths(root, include_untracked) if in_scope(x, scopes)]
     entries = []; skipped = []; total = 0
     # The private output directory is created by the runner; workspace is new.
     workspace.mkdir(mode=0o700, exist_ok=False)
-    for name in candidates:
+    for index, name in enumerate(candidates):
         try:
-            reason = exclusion(name)
-            if reason: raise EvidenceError(reason)
-            raw, _ = source_bytes(root, name)
+            if mode != 'reader' and not source_path(root, name).is_relative_to(root.resolve()):
+                raise EvidenceError('symlink target is outside the selected repository; select it explicitly with reader --path')
+            raw, _, encoding = source_bytes(root, name, encodings.get(name))
         except (EvidenceError, OSError) as exc:
             if mode == 'reader':
                 raise EvidenceError(f'reader input rejected ({name}): {exc}') from exc
             skipped.append({'path': name, 'reason': str(exc)[:160]})
             continue
         total += len(raw)
-        destination = workspace / name
+        exported = raw.decode(encoding).encode('utf-8')
+        export_path = f'{index}.source' if mode == 'reader' else name
+        destination = workspace / export_path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open('xb') as stream: stream.write(raw)
+        with destination.open('xb') as stream: stream.write(exported)
         os.chmod(destination, 0o400)
-        entries.append({'path': name, 'sha256': hashlib.sha256(raw).hexdigest(), 'byte_count': len(raw)})
+        entries.append({'path': name, 'sha256': hashlib.sha256(raw).hexdigest(), 'byte_count': len(raw),
+                        'encoding': encoding, 'export_path': export_path,
+                        'export_sha256': hashlib.sha256(exported).hexdigest()})
     if not entries:
         raise EvidenceError('no eligible source files; use --scope, explicitly include untracked, or use reader --path')
-    return dict(version=1, mode=mode, scopes=scopes, includes_untracked=include_untracked,
+    return dict(version=2, mode=mode, scopes=scopes, includes_untracked=include_untracked,
                 candidate_count=len(candidates), files=entries, skipped=skipped,
                 file_count=len(entries), total_bytes=total,
-                scope_is_repository_complete=False, secret_filter_is_exhaustive=False)
+                scope_is_repository_complete=False)
 
 
 def reader_prompt(workspace: Path, manifest: dict) -> str:
     result = []
     for entry in manifest['files']:
-        raw, lines = source_bytes(workspace, entry['path'])
+        raw, lines, _ = source_bytes(workspace, entry['export_path'], 'utf-8')
         result.append({'path': entry['path'], 'source': '\n'.join(f'{i}: {s}' for i,s in enumerate(lines,1))})
     return compact_json(result)
 
@@ -111,12 +88,14 @@ def reader_prompt(workspace: Path, manifest: dict) -> str:
 def verify_export(root: Path, workspace: Path, manifest: dict) -> None:
     """Check every supplied input, including files not cited by a negative finding."""
     for entry in manifest['files']:
-        for current_root, label in [(workspace, 'snapshot_modified'), (root, 'stale_source_corpus')]:
+        for current_root, path, label, encoding, digest in [
+                (workspace, entry['export_path'], 'snapshot_modified', 'utf-8', entry['export_sha256']),
+                (root, entry['path'], 'stale_source_corpus', entry['encoding'], entry['sha256'])]:
             try:
-                raw, _ = source_bytes(current_root, entry['path'])
+                raw, _, _ = source_bytes(current_root, path, encoding)
             except (EvidenceError, OSError) as exc:
                 raise EvidenceError(f'{label}: {entry["path"]}: {exc}') from exc
-            if hashlib.sha256(raw).hexdigest() != entry['sha256']:
+            if hashlib.sha256(raw).hexdigest() != digest:
                 raise EvidenceError(f'{label}: {entry["path"]}')
 
 
@@ -125,7 +104,7 @@ def bind_handoff(wire: Any, manifest: dict) -> dict:
     if not isinstance(wire, dict): raise EvidenceError('structured_output must be an object')
     # JSON roundtrip avoids modifying the original saved result and bounds strange types.
     data = json.loads(compact_json(wire))
-    files = {x['path']: x['sha256'] for x in manifest['files']}
+    files = {x['path']: x for x in manifest['files']}
     for group in ['primary', 'related']:
         if not isinstance(data.get(group), list): raise EvidenceError('invalid wire reference array')
         for ref in data[group]:
@@ -133,5 +112,6 @@ def bind_handoff(wire: Any, manifest: dict) -> dict:
                 raise EvidenceError('wire reference fields are invalid (do not supply sha256)')
             if not isinstance(ref.get('path'), str) or ref['path'] not in files:
                 raise EvidenceError('reference outside exported source corpus')
-            ref['sha256'] = files[ref['path']]
+            ref['sha256'] = files[ref['path']]['sha256']
+            ref['encoding'] = files[ref['path']]['encoding']
     return load_handoff(compact_json(data).encode('utf-8'))

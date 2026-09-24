@@ -33,10 +33,6 @@ def install(repo: Path, *, apply: bool, model: str = "gemini-3.8-flash-medium", 
             raise ValueError(f"refusing to overwrite existing file: {relative}")
         data = source.read_bytes()
         if source.name == "agy.toml":
-            for value in (model, deep_model):
-                import re
-                if re.fullmatch(r"gemini-3\.8-flash-(low|medium|high)", value) is None:
-                    raise ValueError("use an exact Gemini 3.8 Flash AGY model slug")
             text = data.decode("utf-8")
             config = tomllib.loads(text)
             for key, value in (("explorer_model", model), ("reader_model", model), ("deep_model", deep_model)):

@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Small, fail-closed source-reference validator. Python 3.11+, standard library.
-
-This is a data-validation helper, NOT a sandbox or a relevance judge.
-Only read explicitly requested, UTF-8 source ranges in a trusted repository.
-"""
+"""Decode source files and verify cited ranges against their original bytes."""
 from __future__ import annotations
 
 import argparse
@@ -11,12 +7,12 @@ import hashlib
 import json
 import re
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
+from charset_normalizer import from_bytes
 
-MAX_FILE_BYTES = 10 * 1024 * 1024
 TOP_KEYS = {"version", "status", "primary", "related", "unresolved"}
-SITE_KEYS = {"path", "start", "end", "sha256", "symbol", "evidence"}
+SITE_KEYS = {"path", "start", "end", "sha256", "encoding", "symbol", "evidence"}
 STATUSES = {"ready", "partial", "not_found", "blocked"}
 
 
@@ -48,23 +44,19 @@ def load_handoff(raw: bytes) -> dict[str, Any]:
     return data
 
 
-def _string(value: Any, name: str, maximum: int, *, empty: bool = False) -> str:
-    if not isinstance(value, str) or (not empty and not value.strip()) or len(value) > maximum:
-        raise EvidenceError(f"invalid {name}: expected string of length <= {maximum}")
-    if any(ord(c) < 32 for c in value):
-        raise EvidenceError(f"control character in {name}")
+def _string(value: Any, name: str, *, empty: bool = False) -> str:
+    if not isinstance(value, str) or (not empty and not value.strip()):
+        raise EvidenceError(f"invalid {name}: expected {'a string' if empty else 'a nonempty string'}")
     return value
 
 
 def validate_shape(data: Any) -> None:
     if not isinstance(data, dict) or set(data) != TOP_KEYS:
         raise EvidenceError(f"handoff fields must be exactly {sorted(TOP_KEYS)}")
-    if type(data["version"]) is not int or data["version"] != 2:
+    if type(data["version"]) is not int or data["version"] != 3:
         raise EvidenceError("unsupported handoff version")
     if not isinstance(data["status"], str) or data["status"] not in STATUSES:
         raise EvidenceError("invalid status")
-    seen: set[tuple[str, int, int]] = set()
-    spans: dict[str, list[tuple[int, int, str]]] = {}
     for category in ("primary", "related"):
         locations = data[category]
         if not isinstance(locations, list):
@@ -72,9 +64,10 @@ def validate_shape(data: Any) -> None:
         for item in locations:
             if not isinstance(item, dict) or set(item) != SITE_KEYS:
                 raise EvidenceError(f"location fields must be exactly {sorted(SITE_KEYS)}")
-            path = _string(item["path"], "path", 400)
-            _string(item["symbol"], "symbol", 160, empty=True)
-            _string(item["evidence"], "evidence", 220)
+            _string(item["path"], "path")
+            _string(item["symbol"], "symbol", empty=True)
+            _string(item["evidence"], "evidence")
+            _string(item["encoding"], "encoding")
             digest = item["sha256"]
             if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
                 raise EvidenceError("sha256 must be the 64-character lowercase file digest")
@@ -83,21 +76,11 @@ def validate_shape(data: Any) -> None:
                 raise EvidenceError("line numbers must be integers, not booleans")
             if start < 1 or end < start:
                 raise EvidenceError("range must be 1-based and inclusive")
-            key = (path, start, end)
-            if key in seen:
-                raise EvidenceError("duplicate location")
-            seen.add(key)
-            for old_start, old_end, old_digest in spans.setdefault(path, []):
-                if old_digest != digest:
-                    raise EvidenceError(f"inconsistent file digests: {path}")
-                if max(start, old_start) <= min(end, old_end):
-                    raise EvidenceError(f"overlapping ranges: {path}; merge them")
-            spans[path].append((start, end, digest))
     unresolved = data["unresolved"]
     if not isinstance(unresolved, list):
         raise EvidenceError("unresolved must be an array")
     for value in unresolved:
-        _string(value, "unresolved", 200)
+        _string(value, "unresolved")
     if data["status"] == "ready":
         if not data["primary"] or unresolved:
             raise EvidenceError("ready requires primary evidence and no unresolved question")
@@ -113,46 +96,34 @@ def validate_shape(data: Any) -> None:
 
 
 def source_path(root: Path, relative: str) -> Path:
-    _string(relative, "path", 400)
-    p = PurePosixPath(relative)
-    if "\\" in relative or p.is_absolute() or ".." in p.parts or ":" in relative:
-        raise EvidenceError("use a repository-relative POSIX path without '..'")
-    if str(p) != relative or relative in {"", "."}:
-        raise EvidenceError("path must be normalized")
-    if any(part in {".git", ".ssh", ".aws"} for part in p.parts):
-        raise EvidenceError("repository metadata or credential directory is excluded")
-    if p.name.startswith(".env") or p.name in {"id_rsa", "id_ed25519"} or p.suffix in {".pem", ".key"}:
-        raise EvidenceError("credential-like file is excluded by this helper")
-    current = root.resolve(strict=True)
-    for component in p.parts:
-        current = current / component
-        if current.is_symlink():
-            raise EvidenceError("symlinked source is excluded; use the real repository path")
-    try:
-        resolved = (root.resolve(strict=True) / relative).resolve(strict=True)
-        resolved.relative_to(root.resolve(strict=True))
-    except (OSError, ValueError, RuntimeError) as exc:
-        raise EvidenceError(f"missing path or path outside repository: {relative}") from exc
+    _string(relative, "path")
+    resolved = (root / relative).resolve(strict=True)
     if not resolved.is_file():
         raise EvidenceError(f"not a regular file: {relative}")
     return resolved
 
 
-def source_bytes(root: Path, relative: str) -> tuple[bytes, list[str]]:
+def source_bytes(root: Path, relative: str, encoding: str | None = None) -> tuple[bytes, list[str], str]:
     p = source_path(root, relative)
     try:
-        with p.open("rb") as stream:
-            raw = stream.read(MAX_FILE_BYTES + 1)
+        raw = p.read_bytes()
     except OSError as exc:
         raise EvidenceError(f"cannot read {relative}: {exc}") from exc
-    if len(raw) > MAX_FILE_BYTES:
-        raise EvidenceError(f"file exceeds {MAX_FILE_BYTES} bytes; use a narrower artifact")
-    if b"\x00" in raw:
-        raise EvidenceError("binary source is unsupported")
+    if encoding is None:
+        try:
+            raw.decode('utf-8')
+            encoding = 'utf-8'
+        except UnicodeDecodeError:
+            match = from_bytes(raw).best()
+            if match is None:
+                raise EvidenceError(f"text encoding could not be detected: {relative}")
+            encoding = match.encoding
     try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise EvidenceError("only UTF-8 source is supported; do not silently transcode") from exc
+        text = raw.decode(encoding)
+    except (UnicodeError, LookupError) as exc:
+        raise EvidenceError(f"cannot decode {relative} as {encoding}: {exc}; specify its source encoding") from exc
+    if "\x00" in text:
+        raise EvidenceError("binary source is unsupported")
     # Split on LF, not Unicode splitlines(), so numbers agree with common source tools.
     lines = text.split("\n")
     if text.endswith("\n"):
@@ -160,13 +131,14 @@ def source_bytes(root: Path, relative: str) -> tuple[bytes, list[str]]:
     if not text:
         lines = []
     # CRLF is normalized only for display; SHA-256 always covers the original bytes.
-    return raw, [line[:-1] if line.endswith("\r") else line for line in lines]
+    return raw, [line[:-1] if line.endswith("\r") else line for line in lines], encoding
 
 
 def read_range(root: Path, relative: str, start: int, end: int,
-               expected: str | None = None) -> dict[str, Any]:
-    raw, lines = source_bytes(root, relative)
-    return _render_range(relative, lines, hashlib.sha256(raw).hexdigest(), start, end, expected)
+               expected: str | None = None, *, encoding: str | None = None) -> dict[str, Any]:
+    raw, lines, encoding = source_bytes(root, relative, encoding)
+    return dict(_render_range(relative, lines, hashlib.sha256(raw).hexdigest(), start, end, expected),
+                encoding=encoding)
 
 
 def _render_range(relative: str, lines: list[str], digest: str, start: int, end: int,
@@ -184,7 +156,7 @@ def _render_range(relative: str, lines: list[str], digest: str, start: int, end:
 
 def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = False) -> dict[str, Any]:
     validate_shape(data)
-    sources: dict[str, tuple[list[str], str]] = {}
+    sources: dict[tuple[str, str], tuple[list[str], str]] = {}
     result: dict[str, Any] = {"ok": True, "status": data["status"],
         "locations": len(data["primary"]) + len(data["related"]),
         "semantic_relevance_verified": False}
@@ -192,10 +164,11 @@ def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = F
         excerpts = []
         for item in data[category]:
             path = item["path"]
-            if path not in sources:
-                raw, lines = source_bytes(root, path)
-                sources[path] = (lines, hashlib.sha256(raw).hexdigest())
-            lines, digest = sources[path]
+            key = (path, item["encoding"])
+            if key not in sources:
+                raw, lines, _ = source_bytes(root, *key)
+                sources[key] = (lines, hashlib.sha256(raw).hexdigest())
+            lines, digest = sources[key]
             excerpt = _render_range(path, lines, digest, item["start"], item["end"], item["sha256"])
             if include_source:
                 excerpts.append(dict(item, source=excerpt["source"]))
@@ -215,6 +188,7 @@ def main() -> int:
     read.add_argument("--start", type=int, required=True)
     read.add_argument("--end", type=int, required=True)
     read.add_argument("--expect-sha256")
+    read.add_argument("--encoding", help="override automatic source encoding detection")
     for action, help_text in (("check", "validate a report without printing source"),
                               ("show", "validate all references and return exact numbered source")):
         report = sub.add_parser(action, help=help_text)
@@ -223,7 +197,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.action == "read":
-            result = read_range(args.root, args.path, args.start, args.end, args.expect_sha256)
+            result = read_range(args.root, args.path, args.start, args.end, args.expect_sha256, encoding=args.encoding)
         else:
             if args.handoff == "-":
                 raw = sys.stdin.buffer.read()

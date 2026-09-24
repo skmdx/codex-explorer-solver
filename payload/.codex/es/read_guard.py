@@ -27,11 +27,11 @@ def recognized_read(event: dict[str,Any], root: Path) -> tuple[int|None,str]:
     name=event.get('tool_name');args=event.get('tool_input')
     if not isinstance(args,dict):return None,'unknown_arguments'
     cwd=Path(event.get('cwd',str(root))).resolve(strict=True)
-    def get(path: str) -> tuple[bytes,list[str]]:
+    def get(path: Any) -> tuple[bytes,list[str]]:
         if not isinstance(path,str):raise EvidenceError('invalid path')
         absolute=(cwd/path).resolve(strict=True) if not Path(path).is_absolute() else Path(path).resolve(strict=True)
         relative=absolute.relative_to(root.resolve(strict=True)).as_posix()
-        return source_bytes(root,relative)
+        return source_bytes(root,relative)[:2]
     if name=='Read':
         raw,lines=get(args.get('file_path'))
         offset=args.get('offset',1);limit=args.get('limit')

@@ -28,9 +28,9 @@ class EvidenceTests(unittest.TestCase):
         self.raw = b'def route(x):\n    return normalize(x)\n\ndef normalize(x):\n    return x.strip()\n'
         (self.root / 'src/router.py').write_bytes(self.raw)
         self.site = {'path':'src/router.py','start':1,'end':2,
-                     'sha256':hashlib.sha256(self.raw).hexdigest(), 'symbol':'route',
+                     'sha256':hashlib.sha256(self.raw).hexdigest(), 'encoding':'utf-8', 'symbol':'route',
                      'evidence':'Calls normalize before returning.'}
-        self.data = {'version':2,'status':'ready',
+        self.data = {'version':3,'status':'ready',
                      'primary':[self.site], 'related':[], 'unresolved':[]}
 
     def tearDown(self):
@@ -133,15 +133,30 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(all(ref['source'] == '1: def route(x):\n2:     return normalize(x)'
                             for group in ('primary', 'related') for ref in report[group]))
 
-    def test_duplicate_location(self):
+    def test_same_source_can_support_multiple_findings(self):
         self.data['related'] = [dict(self.site)]
-        with self.assertRaises(EvidenceError):
-            validate_shape(self.data)
+        self.data['related'][0]['evidence'] = 'A second observation about the same function.'
+        report = verify_handoff(self.root, self.data, include_source=True)
+        self.assertEqual(report['primary'][0]['source'], report['related'][0]['source'])
 
     def test_overlapping_locations(self):
         self.data['related'] = [dict(self.site, start=2, end=3)]
-        with self.assertRaises(EvidenceError):
-            validate_shape(self.data)
+        report = verify_handoff(self.root, self.data, include_source=True)
+        self.assertEqual(report['related'][0]['source'], '2:     return normalize(x)\n3: ')
+
+    def test_long_multiline_explanation_and_symbol(self):
+        self.site.update(symbol='qualified_symbol_'*30, evidence='observed fact\n'*80)
+        self.data.update(status='partial', unresolved=['remaining question\n'*80])
+        self.assertTrue(verify_handoff(self.root, self.data)['ok'])
+
+    def test_long_posix_source_path(self):
+        relative = '/'.join(['nested_source_directory']*20 + ['name:with\\backslash.py'])
+        p = self.root / relative
+        p.parent.mkdir(parents=True)
+        p.write_bytes(self.raw)
+        self.site['path'] = relative
+        self.assertEqual(verify_handoff(self.root, self.data, include_source=True)['primary'][0]['source'],
+                         '1: def route(x):\n2:     return normalize(x)')
 
     def test_unknown_fields(self):
         self.site['patch'] = 'not permitted'
@@ -170,33 +185,30 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceError, 'stale_source'):
             verify_handoff(self.root, self.data)
 
-    def test_path_escape(self):
-        for path in ['../outside', '/etc/passwd', 'src/../router.py', 'C:\\repo\\file.py', 'src//router.py']:
-            with self.subTest(path=path), self.assertRaises(EvidenceError):
-                source_path(self.root, path)
+    def test_explicit_paths_accept_absolute_and_relative_spelling(self):
+        expected=self.root/'src/router.py'
+        for path in [str(expected),'./src/router.py','src//router.py','src/../src/router.py']:
+            self.assertEqual(source_path(self.root,path),expected)
 
-    def test_symlink_escape(self):
+    def test_explicit_symlink_to_external_source(self):
         with tempfile.TemporaryDirectory() as outside:
             dest = Path(outside)/'private.py'
             dest.write_text('SECRET')
             (self.root/'src/link.py').symlink_to(dest)
-            with self.assertRaises(EvidenceError):
-                read_range(self.root,'src/link.py',1,1)
+            self.assertEqual(read_range(self.root,'src/link.py',1,1)['source'],'1: SECRET')
 
-    def test_credentials_excluded(self):
+    def test_explicit_config_file_is_read(self):
         (self.root/'.env').write_text('KEY=private\n')
-        with self.assertRaises(EvidenceError):
-            read_range(self.root,'.env',1,1)
+        self.assertEqual(read_range(self.root,'.env',1,1)['source'],'1: KEY=private')
 
     def test_binary_excluded(self):
         (self.root/'src/binary.py').write_bytes(b'\x00\x01')
         with self.assertRaises(EvidenceError):
             read_range(self.root,'src/binary.py',1,1)
 
-    def test_invalid_utf8_excluded(self):
-        (self.root/'src/binary.py').write_bytes(b'\xff')
-        with self.assertRaises(EvidenceError):
-            read_range(self.root,'src/binary.py',1,1)
+    def test_known_detection_error_can_be_corrected(self):
+        (self.root/'src/jp.py').write_bytes('日本語'.encode('cp932'))
+        self.assertEqual(read_range(self.root,'src/jp.py',1,1,encoding='cp932')['source'],'1: 日本語')
 
     def test_crlf_and_unicode_preserve_digest(self):
         raw = '名前 = "値"\r\n次 = 1\r\n'.encode()
@@ -239,6 +251,13 @@ class EvidenceTests(unittest.TestCase):
 
 
 class ConfigInstallerTests(unittest.TestCase):
+    def test_explicit_provider_models_are_installed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root/'.git').mkdir()
+            install(root, apply=True, model='gemini-3.7-flash-medium', deep_model='gemini-3.1-pro-high')
+            config = tomllib.loads((root/'.codex/es/agy.toml').read_text())
+            self.assertEqual(config['reader_model'], 'gemini-3.7-flash-medium')
+            self.assertEqual(config['deep_model'], 'gemini-3.1-pro-high')
     def test_parent_delegation_is_disabled(self):
         self.assertFalse((KIT/'payload/.codex/agents').exists())
         cfg=tomllib.loads((KIT/'payload/.codex/es/config.snippet.toml').read_text())

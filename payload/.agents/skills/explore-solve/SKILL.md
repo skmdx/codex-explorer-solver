@@ -36,10 +36,16 @@ STATE is created on first use; reuse it for the same task. Choose an unused AGY_
 for each invocation; let `locate.py` create it instead of precreating it with `mkdir`/`mktemp`.
 Reader: `--mode reader --path FILE` (repeat paths) sends the specified files, including
 explicit untracked files; do not combine it with `--deep`, `--scope`, or `--include-untracked`.
-Explorer: use `--scope DIR` when known. It exports current Git-tracked UTF-8 source;
+Explorer: use `--scope DIR` when known. It exports current Git-tracked text source;
 `--include-untracked` adds non-ignored untracked files. Unexported areas were not inspected.
+The tool detects encoding separately for each file and exports UTF-8 copies; mixed
+ASCII, UTF-8, CP932 and EUC-JP inputs need no prereading or encoding arguments.
+`--encoding PATH=CODEC` only corrects a known detection error for that file.
+Reader also accepts explicit Git hook paths, agent configuration and absolute paths
+outside the repository. These are investigation data, separate from the worker configuration.
 Default workers use Gemini 3.8 Flash Medium; `--deep` selects High for exploration without requiring
-a previous worker. AGY calls/tool steps are unlimited, with one worker per STATE at a time.
+a previous worker. AGY calls/tool steps are unlimited. Normally run one worker at a time;
+unfinished usage records do not prevent the next invocation.
 Unknown usage stays unknown and permits later calls. AGY defaults to a five-minute
 deadline. For a long cross-module investigation, set a suitable `--timeout` in seconds
 (for example `--timeout 900`). Extending the enclosing cell does not extend AGY's deadline.
@@ -92,8 +98,8 @@ error rather than rerun the investigation. Errors outside the worker run return
 
 For tests/builds with large output:
 `python3 "$ES/capture.py" --repo . --out-dir TEST_RUN -- COMMAND ARGS`
-TEST_RUN must not exist and must differ from AGY_RUN. Capture stops at 300 seconds or 16 MiB of logs
-by default; raise `--timeout` / `--log-limit-bytes` for longer or noisier commands.
+TEST_RUN must not exist and must differ from AGY_RUN. Capture waits for command completion
+and keeps full logs. Set `--timeout` or `--log-limit-bytes` only when the task needs those limits.
 This returns exit code, exact short tails and full log paths. Check the actual test/build
 result; use saved log ranges for missing details instead of rerunning. Small reads/searches
 run directly. Hooks do not replace capture in code mode. When usage measurement is part

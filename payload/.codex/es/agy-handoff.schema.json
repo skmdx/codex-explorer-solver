@@ -3,8 +3,8 @@
   "properties": {
     "version": {
       "type": "integer",
-      "minimum": 2,
-      "maximum": 2
+      "minimum": 3,
+      "maximum": 3
     },
     "status": {
       "type": "string",
@@ -23,7 +23,6 @@
         "properties": {
           "path": {
             "type": "string",
-            "maxLength": 400,
             "minLength": 1
           },
           "start": {
@@ -36,12 +35,10 @@
             "description": "Inclusive end line, at least start."
           },
           "symbol": {
-            "type": "string",
-            "maxLength": 160
+            "type": "string"
           },
           "evidence": {
             "type": "string",
-            "maxLength": 220,
             "minLength": 1,
             "description": "Explain why this location answers the question. Do not repeat source text; the host attaches the original lines."
           }
@@ -63,7 +60,6 @@
         "properties": {
           "path": {
             "type": "string",
-            "maxLength": 400,
             "minLength": 1
           },
           "start": {
@@ -76,12 +72,10 @@
             "description": "Inclusive end line, at least start."
           },
           "symbol": {
-            "type": "string",
-            "maxLength": 160
+            "type": "string"
           },
           "evidence": {
             "type": "string",
-            "maxLength": 220,
             "minLength": 1,
             "description": "Explain why this location answers the question. Do not repeat source text; the host attaches the original lines."
           }
@@ -100,7 +94,6 @@
       "type": "array",
       "items": {
         "type": "string",
-        "maxLength": 200,
         "minLength": 1
       }
     }
@@ -113,5 +106,5 @@
     "unresolved"
   ],
   "additionalProperties": false,
-  "description": "Source evidence report. Cite only the smallest complete ranges needed for the question. Ranges must exist in the supplied files, be 1-based and inclusive, and not overlap within a file across primary/related. Use normalized repository-relative POSIX paths. Use plain single-line strings without control characters."
+  "description": "Source evidence report. Cite the smallest ranges needed using the supplied source paths and 1-based inclusive lines. Keep explanations concise; overlapping citations are allowed when they support different findings."
 }

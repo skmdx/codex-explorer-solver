@@ -6,6 +6,7 @@
 ## 手動でAGYを呼ぶ
 
 対象のGitリポジトリのルートで実行します。Python 3.11以降、Git、認証済みのAGYが必要です。
+文字コード判定には `charset-normalizer` を使います。`python3 -m pip install -r requirements.txt` で依存ライブラリを導入します。
 プロセス制御はLinux・macOS・WSLを対象にしています。
 
 ```bash
@@ -53,7 +54,8 @@ Readerは`--scope`・`--include-untracked`と併用せず、明示したファ�
 | `metrics.json` | 成否、使用モデル、使用量、失敗理由 |
 | `source-manifest.json` | コピーしたソースと除外理由 |
 | `events.jsonl`・`stderr.log` | AGYの出力。障害調査が必要なときに読む |
-| `workspace/` | AGYが調べたソースのコピー |
+| `sources/` | AGYが調べたUTF-8のソースコピー |
+| `workspace/` | 調査用エージェントの実行設定 |
 
 保存した調査結果から原文を再取得するときと、使用量の履歴を見るときは次を使います。
 
@@ -73,19 +75,27 @@ CLIの引数構文エラーは標準エラー出力に返ります。
 
 ## ソースの受け渡しと検証
 
-AGYの回答と保存するhandoffは`version: 2`です。状態は`ready`・`partial`・`not_found`・`blocked`、
+AGYの回答と保存するhandoffは`version: 3`です。状態は`ready`・`partial`・`not_found`・`blocked`、
 不足や障害の説明は`unresolved`にまとめます。各状態で必要な引用と説明は
 [回答スキーマ](../payload/.codex/es/agy-handoff.schema.json)に定義します。
-引用箇所と未解決の問いの件数に固定上限はありません。検証に必要な範囲を重複なく返します。
+引用箇所と未解決の問いの件数に固定上限はありません。同じ範囲が別の判断の根拠になる場合も返せます。
 引用の行数・原文出力・handoffのバイト数に追加上限は設けません。
 
 [agy_snapshot.py](../payload/.codex/es/agy_snapshot.py)は、Git追跡済みファイルの現在の内容をコピーします。
 未コミットの変更も含みます。Readerでは指定したファイルを使います。
-ルートのエージェント設定、Gitの内部情報、認証情報を含みそうなパス、symlink、UTF-8以外、単体10 MiB超のファイルは除外します。
-除外されたファイルは調査対象外です。ファイル数や合計サイズの上限はありません。
+ファイル名による一律の除外はありません。Git内部のファイルは追跡済み一覧に含まれないため、
+Git hookの調査ではReaderに `.git/hooks/pre-commit` などの実際のパスを渡します。
+Readerはリポジトリ外の絶対パスやsymlinkも扱えます。Explorerではリポジトリ外を指すsymlinkは対象外です。
+エージェント設定も調査データとしてコピーし、実行設定とは別のディレクトリに置きます。
+ファイル数や合計サイズの上限はありません。読み取れなかったファイルと理由はmanifestに記録します。
+
+文字コードはファイルごとに判定し、UTF-8へ変換して渡します。ASCII・UTF-8・CP932・EUC-JPが
+混在した入力でも、Codexの先読みや指定は不要です。判定した文字コードをmanifestとhandoffに保存し、
+引用の再取得にも使います。短い文字列などでは判定を誤る場合があり、既知の誤判定は
+`--encoding path/to/file=cp932` でそのファイルだけ訂正できます。複数指定はオプションを繰り返します。
 
 AGY終了後は、コピーした全ファイルについて、コピーと元ソースが実行前の内容に一致するか確認します。
-引用のハッシュはAGYに生成させず、実行前の記録から付けます。
+変換前の原本とUTF-8コピーのハッシュを別々に記録します。引用のハッシュと文字コードはAGYに生成させず、実行前の記録から付けます。
 [evidence.py](../payload/.codex/es/evidence.py)が引用位置と原文を検証し、[locate.py](../payload/.codex/es/locate.py)が原文を含めて返します。
 この照合の対象はコピーしたファイルです。調査範囲外のファイルや、回答の意味的な正しさを保証するものではありません。
 
@@ -109,9 +119,9 @@ Codex側の待機方法は[SKILL.mdのWait for the result](../payload/.agents/sk
 
 ## 同時実行と使用量
 
-[budget.py](../payload/.codex/es/budget.py)は、ソースのコピー前に、同じ`state-dir`のSQLiteトランザクション内で実行枠を確保します。
-実行中の記録が1件あれば次の起動を拒否し、終了処理で枠を解放します。別の`state-dir`の実行は制限しません。
-強制終了で実行中の記録が残った場合は、実プロセスの終了を確認してから、`budget.py mark-abandoned`で解放します。
+[budget.py](../payload/.codex/es/budget.py)は、実行の開始・終了と使用量をSQLiteに記録します。
+実行中の記録が残っていても次の起動を拒否しません。強制終了した記録を終了扱いにするには
+`budget.py mark-abandoned --state-dir STATE --job-id ID` を使えます。これは使用量記録の整理であり、再実行の前提ではありません。
 
 呼出し回数とAGY内部のツール回数は無制限です。使用量はAGYの最後の結果を1回だけ記録し、各ステップの値を重ねて加算しません。
 使用量が欠けた場合も終了を記録します。合計は不明のままとし、取得済み分は下限として表示します。
@@ -120,6 +130,7 @@ Codexの使用量は含まれません。AGYのキャッシュ値をCodexと同�
 ## テスト・ビルドの出力
 
 [capture.py](../payload/.codex/es/capture.py)はコマンドを1回実行して、完全な標準出力・標準エラーと実行情報を保存します。
+既定では時間・ログ量でコマンドを打ち切りません。必要な場合だけ`--timeout`・`--log-limit-bytes`を指定します。
 正常終了ではログ末尾を短く、異常終了では長めに返します。詳細の確認には保存ログを使います。
 
 ```bash

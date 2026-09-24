@@ -44,10 +44,11 @@ def digest_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def capture(root: Path, out: Path, command: list[str], timeout: float=300,
-            log_limit: int=16*1024*1024) -> tuple[dict[str,Any],int]:
+def capture(root: Path, out: Path, command: list[str], timeout: float | None=None,
+            log_limit: int | None=None) -> tuple[dict[str,Any],int]:
     if os.name != 'posix': raise EvidenceError('capture requires Linux/macOS/WSL')
-    if not command or not math.isfinite(timeout) or timeout<=0 or log_limit<1024:
+    if not command or (timeout is not None and (not math.isfinite(timeout) or timeout<=0)) \
+            or (log_limit is not None and log_limit<=0):
         raise EvidenceError('provide a command and positive finite timeout/log limit')
     root=root.resolve(strict=True); out=out.resolve()
     if not root.is_dir() or out==root or root in out.parents:
@@ -60,14 +61,14 @@ def capture(root: Path, out: Path, command: list[str], timeout: float=300,
         try:
             proc=subprocess.Popen(command,cwd=root,stdin=subprocess.DEVNULL,stdout=so,stderr=se,
                                   start_new_session=True)
-            while proc.poll() is None:
-                if time.monotonic()-start>=timeout: reason='local_deadline'
-                elif os.fstat(so.fileno()).st_size+os.fstat(se.fileno()).st_size>log_limit: reason='log_budget'
+            while (timeout is not None or log_limit is not None) and proc.poll() is None:
+                if timeout is not None and time.monotonic()-start>=timeout: reason='local_deadline'
+                elif log_limit is not None and os.fstat(so.fileno()).st_size+os.fstat(se.fileno()).st_size>log_limit: reason='log_budget'
                 if reason:
                     stop_process_group(proc);break
                 time.sleep(0.05)
-            code=proc.wait(timeout=3)
-            if os.fstat(so.fileno()).st_size+os.fstat(se.fileno()).st_size>log_limit:
+            code=proc.wait()
+            if log_limit is not None and os.fstat(so.fileno()).st_size+os.fstat(se.fileno()).st_size>log_limit:
                 reason=reason or 'log_budget'
         except KeyboardInterrupt:
             if proc is not None:stop_process_group(proc)
@@ -107,7 +108,8 @@ def capture(root: Path, out: Path, command: list[str], timeout: float=300,
 def main() -> int:
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--repo',type=Path,default=Path.cwd());p.add_argument('--out-dir',type=Path,required=True)
-    p.add_argument('--timeout',type=float,default=300);p.add_argument('--log-limit-bytes',type=int,default=16*1024*1024)
+    p.add_argument('--timeout',type=float,help='stop after this many seconds; default: no deadline')
+    p.add_argument('--log-limit-bytes',type=int,help='stop above this combined log size; default: unlimited')
     p.add_argument('command',nargs=argparse.REMAINDER);a=p.parse_args()
     cmd=a.command[1:] if a.command[:1]==['--'] else a.command
     try:

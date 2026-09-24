@@ -38,18 +38,20 @@ if case=='auth':
     emit({'event':'result','result':{'status':'ERROR','error':'authentication required','num_turns':0}});sys.exit(1)
 if case=='fail_usage':
     emit({'event':'result','result':{'status':'ERROR','error':'simulated failure','num_turns':1,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}});sys.exit(1)
-root=pathlib.Path.cwd()
+root=pathlib.Path.cwd().parent/'sources'
+manifest=json.loads((root.parent/'source-manifest.json').read_text())
+source_files={entry['path']:root/entry['export_path'] for entry in manifest['files']}
 if case=='snapshot_changed':
-    file=root/'src/example.py';file.chmod(0o600);file.write_text('changed\n')
+    file=source_files['src/example.py'];file.chmod(0o600);file.write_text('changed\n')
 if case=='other_changed':
-    file=root/'src/other.py';file.chmod(0o600);file.write_text('changed\n')
+    file=source_files['src/other.py'];file.chmod(0o600);file.write_text('changed\n')
 if case=='original_changed':
     pathlib.Path(os.environ['FAKE_ORIGINAL_FILE']).write_text('externally changed\n')
 ref={'path':'src/example.py','start':1,'end':2,'symbol':'f','evidence':'Implementation of f.'}
 if case=='outside':ref['path']='src/not_exported.py'
 if case=='fake_hash':ref['sha256']='0'*64
 if case=='bad_range':ref['end']=999
-wire={'version':2,'status':'ready','primary':[ref],'related':[],'unresolved':[]}
+wire={'version':3,'status':'ready','primary':[ref],'related':[],'unresolved':[]}
 if case=='partial':wire.update(status='partial',unresolved=['Caller not located.'])
 if case=='not_found':wire.update(status='not_found',primary=[],unresolved=['No matching symbol in exported files.'])
 if case=='blocked':wire.update(status='blocked',primary=[],unresolved=['Fixture permission denial.'])

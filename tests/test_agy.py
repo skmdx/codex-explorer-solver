@@ -32,7 +32,7 @@ class Fixture(unittest.TestCase):
         return subprocess.run(cmd+(extra or []),capture_output=True,text=True,env=env,timeout=20)
     def metrics(self,out='run'):return json.loads((self.base/out/'metrics.json').read_text())
     def export(self,**kw):
-        params=dict(mode='localize',paths=[],scopes=[],include_untracked=False);params.update(kw)
+        params=dict(mode='localize',paths=[],scopes=[],include_untracked=False,encodings={});params.update(kw)
         return snap.export(self.repo,self.base/'workspace',**params)
 
 class TransportTests(unittest.TestCase):
@@ -87,26 +87,54 @@ class SnapshotTests(Fixture):
         (self.repo/'new.py').write_text('new\n');m=self.export();self.assertNotIn('new.py',[x['path'] for x in m['files']])
     def test_untracked_explicitly_included(self):
         (self.repo/'new.py').write_text('new\n');m=self.export(include_untracked=True)
-        self.assertIn('new.py',[x['path'] for x in m['files']]);self.assertFalse((self.base/'workspace/.codex').exists())
+        self.assertIn('new.py',[x['path'] for x in m['files']])
     def test_gitignore_respected_for_untracked(self):
         (self.repo/'.gitignore').write_text('ignored.py\n');(self.repo/'ignored.py').write_text('do not send')
         m=self.export(include_untracked=True);self.assertNotIn('ignored.py',[x['path'] for x in m['files']])
-    def test_credentials_rejected_for_reader(self):
-        (self.repo/'.env').write_text('SECRET=not-for-worker')
-        with self.assertRaises(EvidenceError):self.export(mode='reader',paths=['.env'])
+    def test_explicit_config_is_reader_data(self):
+        (self.repo/'.env').write_text('MODE=development')
+        m=self.export(mode='reader',paths=['.env'])
+        self.assertEqual((self.base/'workspace'/m['files'][0]['export_path']).read_text(),'MODE=development')
     def test_symlink_not_exported(self):
         (self.repo/'src/link.py').symlink_to('/etc/passwd')
         subprocess.run(['git','-C',str(self.repo),'add','src/link.py'],check=True)
         m=self.export();self.assertTrue(any(x['path']=='src/link.py' for x in m['skipped']))
-    def test_project_agent_config_not_exported(self):
+    def test_project_agent_config_is_source_data(self):
         (self.repo/'AGENTS.md').write_text('Run arbitrary external commands')
         subprocess.run(['git','-C',str(self.repo),'add','AGENTS.md','.codex'],check=True)
-        m=self.export();self.assertFalse((self.base/'workspace/AGENTS.md').exists());self.assertGreater(len(m['skipped']),0)
-    def test_binary_and_invalid_utf8_recorded_as_skipped(self):
-        (self.repo/'src/binary').write_bytes(b'\x00\xff');subprocess.run(['git','-C',str(self.repo),'add','src/binary'],check=True)
+        m=self.export();self.assertEqual((self.base/'workspace/AGENTS.md').read_text(),'Run arbitrary external commands')
+    def test_binary_recorded_as_skipped(self):
+        (self.repo/'src/binary').write_bytes(b'\x00binary\x00');subprocess.run(['git','-C',str(self.repo),'add','src/binary'],check=True)
         self.assertEqual(len(self.export()['skipped']),1)
-    def test_case_variant_agent_directory_excluded(self):
-        self.assertIsNotNone(snap.exclusion('.Agents/agents/untrusted.md'))
+    def test_root_scope_accepts_dot(self):
+        self.assertEqual(self.export(scopes=['.'])['file_count'],2)
+    def test_mixed_encodings_are_detected_per_file(self):
+        text = '# 日本語のコメントです。文字コードの自動判定を確認します。\nname = "東京都の住所を表示する"\n'
+        expected = {'ascii.py': 'value = 1\n'}
+        for codec in ('utf-8', 'cp932', 'euc-jp'):
+            name = f'{codec}.py'
+            (self.repo/name).write_bytes(text.encode(codec))
+            expected[name] = text
+        (self.repo/'ascii.py').write_bytes(expected['ascii.py'].encode('ascii'))
+        manifest = self.export(mode='reader', paths=list(expected))
+        for entry in manifest['files']:
+            original = (self.repo/entry['path']).read_bytes()
+            self.assertEqual(original.decode(entry['encoding']), expected[entry['path']])
+            self.assertEqual(entry['sha256'], hashlib.sha256(original).hexdigest())
+            self.assertEqual((self.base/'workspace'/entry['export_path']).read_text(), expected[entry['path']])
+        snap.verify_export(self.repo, self.base/'workspace', manifest)
+        wire = dict(version=3,status='ready',primary=[dict(path=name,start=1,end=1,symbol='',evidence='source') for name in expected],related=[],unresolved=[])
+        from evidence import verify_handoff
+        report = verify_handoff(self.repo, snap.bind_handoff(wire, manifest))
+        self.assertTrue(report['ok'])
+    def test_reader_accepts_git_hook_and_external_hook(self):
+        hook = self.repo/'.git/hooks/pre-commit'
+        hook.write_text('#!/bin/sh\necho local\n')
+        external = self.base/'pre-push'
+        external.write_text('#!/bin/sh\necho external\n')
+        manifest = self.export(mode='reader', paths=['.git/hooks/pre-commit', str(external)])
+        self.assertEqual(manifest['file_count'],2)
+        snap.verify_export(self.repo,self.base/'workspace',manifest)
     def test_reader_accepts_more_than_twelve_files_and_old_byte_cap(self):
         paths=[]
         for i in range(20):
@@ -117,9 +145,21 @@ class SnapshotTests(Fixture):
         name='payload/.codex/es/budget.py';p=self.repo/name;p.parent.mkdir(parents=True);p.write_text('def reserve(): pass\n')
         subprocess.run(['git','-C',str(self.repo),'add',name],check=True)
         m=self.export();self.assertIn(name,[x['path'] for x in m['files']])
-    def test_source_larger_than_old_one_megabyte_cap_is_exported(self):
-        (self.repo/'src/example.py').write_text('#'+('x'*1048576))
+    def test_source_larger_than_ten_megabytes_is_exported(self):
+        (self.repo/'src/example.py').write_text('#'+('x'*(11*1024*1024)))
         m=self.export();self.assertIn('src/example.py',[x['path'] for x in m['files']])
+        self.assertEqual((self.base/'workspace/src/example.py').stat().st_size,11*1024*1024+1)
+    def test_internal_source_symlink_is_copied_as_regular_file(self):
+        (self.repo/'src/link.py').symlink_to('example.py')
+        m=self.export(mode='reader',paths=['src/link.py','src/link.py'])
+        self.assertEqual(m['file_count'],1)
+        dest=self.base/'workspace'/m['files'][0]['export_path']
+        self.assertFalse(dest.is_symlink());self.assertEqual(dest.read_bytes(),(self.repo/'src/example.py').read_bytes())
+    def test_explicit_symlink_to_config_is_reader_data(self):
+        (self.repo/'credentials.json').write_text('private')
+        (self.repo/'src/link.py').symlink_to('../credentials.json')
+        m=self.export(mode='reader',paths=['src/link.py'])
+        self.assertEqual((self.base/'workspace'/m['files'][0]['export_path']).read_text(),'private')
     def test_scope_is_literal_not_git_pathspec(self):
         m=self.export(scopes=['src/example.py']);self.assertEqual(m['file_count'],1)
     def test_invalid_scope_refused(self):
@@ -144,18 +184,15 @@ class AgyRunnerTests(Fixture):
         self.assertFalse(result['scope']['repository_complete'])
         self.assertIsNone(result['error'])
         self.assertTrue(self.metrics()['task_usage_recorded'])
-    def test_busy_state_refused_before_source_export(self):
+    def test_unfinished_record_does_not_block_investigation(self):
         budget.reserve(self.state,self.repo,'repo_explorer',self.task.read_bytes())
-        r=self.invoke();self.assertNotEqual(r.returncode,0)
-        self.assertIn('already reserved',json.loads(r.stdout)['error'])
-        self.assertEqual(json.loads(r.stdout)['status'],'admission_failed')
-        self.assertFalse(self.metrics()['task_usage_recorded'])
-        self.assertFalse((self.base/'run/workspace').exists())
-        self.assertFalse((self.base/'run/events.jsonl').exists())
+        r=self.invoke();self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        self.assertTrue(self.metrics()['task_usage_recorded'])
+        self.assertEqual(budget.status(self.state)['attempts'],2)
     def test_accounting_failure_retains_evidence_and_reports_error(self):
         args=SimpleNamespace(repo=self.repo,task_file=self.task,state_dir=self.state,
              out_dir=self.base/'run',agy=str(FAKE),timeout=None,mode='localize',
-             deep=False,path=[],scope=[],include_untracked=False,config=None,model=None)
+             deep=False,path=[],scope=[],include_untracked=False,config=None,model=None,encoding=[])
         with patch.object(budget,'finish',side_effect=sqlite3.OperationalError('database full')):
             result,code=locate.run(args)
         self.assertEqual(code,1)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent per-task usage ledger and single-worker admission control.
+"""Persistent per-task usage ledger.
 
 Counts attempts including failures. Not a provider token cap or a sandbox.
 Does not intercept native subagent spawns or arbitrary separate AGY/Codex processes.
@@ -51,8 +51,6 @@ def reserve(state: Path, root: Path, role: str, task: bytes) -> str:
         policy=json.loads(c.execute('SELECT data FROM policy WHERE id=1').fetchone()[0])
         if policy['repo']!=str(root.resolve(strict=True)):
             raise EvidenceError('budget belongs to a different repository')
-        if c.execute("SELECT 1 FROM jobs WHERE status='running' LIMIT 1").fetchone():
-            raise EvidenceError('one worker is already reserved/running; no automatic stale-lease reset')
         job=uuid.uuid4().hex
         c.execute('INSERT INTO jobs(id,role,task_sha256,status,started) VALUES(?,?,?,?,?)',
                   (job,role,hashlib.sha256(task).hexdigest(),'running',time.time()))
