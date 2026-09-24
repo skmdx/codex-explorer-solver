@@ -46,6 +46,36 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['sha256'], hashlib.sha256(self.raw).hexdigest())
         self.assertEqual(result['source'], '1: def route(x):\n2:     return normalize(x)')
 
+    def show(self):
+        return subprocess.run([sys.executable,str(KIT/'payload/.codex/es/evidence.py'),
+            'show','--root',str(self.root),'--handoff','-'],
+            input=json.dumps(self.data),text=True,capture_output=True)
+
+    def test_show_returns_verified_originals_and_unresolved(self):
+        self.data.update(status='partial',stop_reason='no_progress',unresolved=['Find caller'])
+        self.data['related']=[dict(self.site,start=4,end=5,symbol='normalize')]
+        r=self.show();self.assertEqual(r.returncode,0,r.stderr)
+        report=json.loads(r.stdout)
+        self.assertEqual(report['primary'][0]['source'],'1: def route(x):\n2:     return normalize(x)')
+        self.assertEqual(report['related'][0]['source'],'4: def normalize(x):\n5:     return x.strip()')
+        self.assertEqual(report['unresolved'],['Find caller'])
+        self.assertFalse(report['semantic_relevance_verified'])
+
+    def test_show_emits_no_source_if_later_reference_is_stale(self):
+        (self.root/'src/other.py').write_bytes(self.raw+b'# changed\n')
+        self.data['related']=[dict(self.site,path='src/other.py')]
+        r=self.show();self.assertEqual(r.returncode,2)
+        self.assertEqual(r.stdout,'');self.assertIn('stale_source',r.stderr)
+
+    def test_show_combined_size_is_bounded_without_truncation(self):
+        raw=('x'*9000+'\n'+'y'*9000+'\n').encode()
+        (self.root/'src/router.py').write_bytes(raw)
+        self.site.update(start=1,end=1,sha256=hashlib.sha256(raw).hexdigest())
+        self.data['related']=[dict(self.site,start=2,end=2)]
+        self.assertTrue(verify_handoff(self.root,self.data)['ok'])
+        r=self.show();self.assertEqual(r.returncode,2)
+        self.assertEqual(r.stdout,'');self.assertIn('combined source exceeds',r.stderr)
+
     def test_stale_same_head(self):
         (self.root / 'src/router.py').write_bytes(self.raw + b'# uncommitted change\n')
         with self.assertRaisesRegex(EvidenceError, 'stale_source'):

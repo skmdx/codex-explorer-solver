@@ -157,20 +157,26 @@ python3 .codex/es/locate.py --repo "$PWD" \
 
 Readerは上記の実行コマンドに `--mode reader --path src/example.py` を追加します。
 `--path` は複数指定できます。ReaderとExplorerは代替経路で、両方を必ず実行しません。
-`--deep` は同じSTATEを使う追加探索です。少なくとも1回の先行workerが必要です。
+`--deep` は同じSTATEを使うHighでの探索です。先行workerは不要で、回数制限はありません。
 追加探索の質問は、元課題の全文を繰り返すのではなく、未解決の関係と候補に絞れます。
 
 返却は小さなJSONで、検証済みの `handoff_path` と `metrics_path` を含みます。
 親へ `events.jsonl` や `request.jsonl` の全文を渡してはいけません。
 
 ```bash
-python3 .codex/es/evidence.py check --root . \
+python3 .codex/es/evidence.py show --root . \
   --handoff "$RUN/explore-01/handoff.json"
 python3 .codex/es/budget.py status --state-dir "$RUN/budget"
 ```
 
 Codexには課題とhandoffのパスを渡し、「初期探索を重複せず原文を確認して実装」と
 依頼します。行範囲は索引であり編集範囲の制限ではありません。
+`show`は全参照を検証して行番号付き原文も返します。同じファイルは一度だけ読み込みます。
+合計16,000 bytesを超える場合は切り詰めずエラーとし、`check`と必要範囲の`read`を使います。
+
+大量のコマンド出力には`capture.py`を使います。正常終了時は各ログ末尾最大256 bytesと
+終了コード・ログ位置を返し、異常終了時は各末尾最大1,536 bytesと終了理由を返します。
+完全なstdout/stderrと実行情報・hashは出力先のログと`capture.json`に保存します。
 
 ## 6. スナップショットと原文検証
 

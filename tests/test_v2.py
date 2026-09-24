@@ -191,6 +191,19 @@ class CaptureTests(unittest.TestCase):
     def test_no_shell_interpretation(self):
         r,code=capture(self.root,self.base/'run',[sys.executable,'-c','import sys;print(sys.argv[1])','$(touch hacked)'])
         self.assertEqual(code,0);self.assertFalse((self.root/'hacked').exists())
+    def test_success_has_short_exact_tails_and_full_private_record(self):
+        text='x'*20000+'\n237 tests passed\n'
+        command=[sys.executable,'-c',f'import sys;sys.stdout.write({text!r});sys.stderr.write("warning retained")']
+        r,code=capture(self.root,self.base/'run',command)
+        self.assertEqual(code,0);self.assertEqual(r['returncode'],0)
+        self.assertEqual(r['stdout']['tail'],text[-256:])
+        self.assertEqual(r['stderr']['tail'],'warning retained')
+        self.assertEqual(Path(r['stdout']['path']).read_text(),text)
+        record=json.loads(Path(r['record_path']).read_text())
+        self.assertEqual(record['command'],command)
+        self.assertTrue(record['raw_logs_complete_for_observed_process'])
+        self.assertEqual(record['stdout']['sha256'],hashlib.sha256(text.encode()).hexdigest())
+        self.assertLess(len(json.dumps(r)),1000)
     def test_timeout_is_nonzero(self):
         r,code=capture(self.root,self.base/'run',[sys.executable,'-c','import time;time.sleep(10)'],timeout=0.1)
         self.assertEqual(code,124);self.assertEqual(r['termination_reason'],'local_deadline')

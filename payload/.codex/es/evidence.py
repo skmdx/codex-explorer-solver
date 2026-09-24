@@ -181,12 +181,16 @@ def source_bytes(root: Path, relative: str) -> tuple[bytes, list[str]]:
 
 def read_range(root: Path, relative: str, start: int, end: int,
                expected: str | None = None) -> dict[str, Any]:
+    raw, lines = source_bytes(root, relative)
+    return _render_range(relative, lines, hashlib.sha256(raw).hexdigest(), start, end, expected)
+
+
+def _render_range(relative: str, lines: list[str], digest: str, start: int, end: int,
+                  expected: str | None) -> dict[str, Any]:
     if type(start) is not int or type(end) is not int or not (1 <= start <= end):
         raise EvidenceError("invalid 1-based inclusive range")
     if end - start + 1 > MAX_RANGE_LINES:
         raise EvidenceError(f"read at most {MAX_RANGE_LINES} lines per request")
-    raw, lines = source_bytes(root, relative)
-    digest = hashlib.sha256(raw).hexdigest()
     if expected is not None and digest != expected:
         raise EvidenceError(f"stale_source: {relative}; re-localize the symbol in this file")
     if end > len(lines):
@@ -198,13 +202,30 @@ def read_range(root: Path, relative: str, start: int, end: int,
     return result
 
 
-def verify_handoff(root: Path, data: dict[str, Any]) -> dict[str, Any]:
+def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = False) -> dict[str, Any]:
     validate_shape(data)
-    for item in data["primary"] + data["related"]:
-        read_range(root, item["path"], item["start"], item["end"], item["sha256"])
-    return {"ok": True, "status": data["status"],
-            "locations": len(data["primary"]) + len(data["related"]),
-            "semantic_relevance_verified": False}
+    sources: dict[str, tuple[list[str], str]] = {}
+    result: dict[str, Any] = {"ok": True, "status": data["status"],
+        "locations": len(data["primary"]) + len(data["related"]),
+        "semantic_relevance_verified": False}
+    for category in ("primary", "related"):
+        excerpts = []
+        for item in data[category]:
+            path = item["path"]
+            if path not in sources:
+                raw, lines = source_bytes(root, path)
+                sources[path] = (lines, hashlib.sha256(raw).hexdigest())
+            lines, digest = sources[path]
+            excerpt = _render_range(path, lines, digest, item["start"], item["end"], item["sha256"])
+            if include_source:
+                excerpts.append(dict(item, source=excerpt["source"]))
+        if include_source:
+            result[category] = excerpts
+    if include_source:
+        result.update(stop_reason=data["stop_reason"], unresolved=data["unresolved"])
+        if len(compact_json(result).encode("utf-8")) > MAX_READ_BYTES:
+            raise EvidenceError(f"combined source exceeds {MAX_READ_BYTES} bytes; use check and read selected ranges")
+    return result
 
 
 def main() -> int:
@@ -216,9 +237,11 @@ def main() -> int:
     read.add_argument("--start", type=int, required=True)
     read.add_argument("--end", type=int, required=True)
     read.add_argument("--expect-sha256")
-    check = sub.add_parser("check", help="validate a report without printing source")
-    check.add_argument("--root", type=Path, default=Path.cwd())
-    check.add_argument("--handoff", required=True, help="JSON file, or - for stdin")
+    for action, help_text in (("check", "validate a report without printing source"),
+                              ("show", "validate all references and return exact numbered source")):
+        report = sub.add_parser(action, help=help_text)
+        report.add_argument("--root", type=Path, default=Path.cwd())
+        report.add_argument("--handoff", required=True, help="JSON file, or - for stdin")
     args = parser.parse_args()
     try:
         if args.action == "read":
@@ -229,7 +252,7 @@ def main() -> int:
             else:
                 with Path(args.handoff).open("rb") as stream:
                     raw = stream.read(MAX_HANDOFF_BYTES + 1)
-            result = verify_handoff(args.root, load_handoff(raw))
+            result = verify_handoff(args.root, load_handoff(raw), include_source=args.action == "show")
         print(compact_json(result))
         return 0
     except (EvidenceError, OSError) as exc:

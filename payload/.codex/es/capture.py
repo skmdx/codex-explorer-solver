@@ -77,11 +77,13 @@ def capture(root: Path, out: Path, command: list[str], timeout: float=300,
             if proc is not None:stop_process_group(proc)
             raise
     wrapped=124 if reason=='local_deadline' else 130 if reason=='interrupted' else 125 if reason=='log_budget' else (code if code>=0 else 128-code)
-    result={'kind':'captured_command','returncode':code,'wrapper_exit_code':wrapped,
+    result: dict[str,Any]={'kind':'captured_command','returncode':code,'wrapper_exit_code':wrapped,
+            'record_path':str(out/'capture.json'),
             'termination_reason':reason,'elapsed_seconds':round(time.monotonic()-start,3),
             'success_claimed':False,'raw_logs_complete_for_observed_process':reason is None,
             'preview_policy':'exact_tail_not_semantic_summary',
-            'stdout':tail(stdout),'stderr':tail(stderr)}
+            'stdout':tail(stdout,256 if wrapped==0 else 1536),
+            'stderr':tail(stderr,256 if wrapped==0 else 1536)}
     for key in ('stdout','stderr'):result[key]['sha256']=digest_file(out/f'{key}.log')
     if len(compact_json(result).encode()) > 6144:
         for key in ('stdout','stderr'):
@@ -90,8 +92,14 @@ def capture(root: Path, out: Path, command: list[str], timeout: float=300,
             result[key]['preview_encoding'] = 'omitted: serialized preview exceeds byte budget'
 
     # Full invocation may contain secrets; retain privately, not in model-facing stdout.
-    record=dict(result,command=command,cwd=str(root))
+    record: dict[str,Any]=dict(result,command=command,cwd=str(root))
     write_private(out/'capture.json',json.dumps(record,ensure_ascii=False,indent=2)+'\n')
+    if wrapped==0:
+        # Keep audit metadata in capture.json; model-facing success output needs
+        # only the exit status, short exact previews, and recoverable log paths.
+        result={key:result[key] for key in ('kind','returncode','elapsed_seconds','record_path')}
+        for key in ('stdout','stderr'):
+            result[key]={field:record[key][field] for field in ('path','total_bytes','tail')}
     return result,wrapped
 
 

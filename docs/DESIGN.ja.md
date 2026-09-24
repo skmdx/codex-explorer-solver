@@ -15,7 +15,8 @@ Codexのnative child、独立codex exec、AGYの再帰的な子を利用しな�
 - `agy.toml`: キット独自の設定。Googleのglobal settingsではない。
 - `agy_agents/*.md`: 起動時だけexportの`.agents/agents/`へ配置するmain-agent定義。
 - `agy-handoff.schema.json`: モデルが返すhashなしの構造。
-- `handoff.schema.json` / `evidence.py`: 親が読む従来互換のhash付き構造と検証。
+- `handoff.schema.json` / `evidence.py`: hash付き参照の検証と原文取得。`show`で一括実行する。
+- `capture.py`: 完全なログを保存し、正常終了時は短い出力、異常終了時は詳細を返す。
 - `budget.py`: 同じSTATEに対する外部worker受付の直列化と使用量の記録。
 - `hook_*.py`, `configure_hooks.py`: v3から変更なし。登録の再実施は必須ではない。
 
