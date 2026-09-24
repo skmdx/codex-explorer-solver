@@ -35,7 +35,7 @@ AGYには定義・呼出し・状態更新・条件分岐・テストの位置�
 |---|---|
 | ディレクトリを絞って検索する | `--scope src --scope tests` |
 | 指定ファイルの全文を読ませる（Reader） | `--mode reader --path src/login.py`。複数ファイルは`--path`を繰り返す |
-| Highモデルで検索する | `--deep`。Readerとは併用しない |
+| `deep_model`で検索する | `--deep`。既定値は通常と同じHigh。Readerとは併用しない |
 | 未追跡ファイルも検索対象にする | `--include-untracked`。Gitのignore対象は含まない |
 | 実行期限を指定する | 例：`--timeout 900`。省略時は5分。長い横断調査では期限を明示する |
 

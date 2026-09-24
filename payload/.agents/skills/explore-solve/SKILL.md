@@ -30,7 +30,7 @@ STATE is created on first invocation and reused for this task; RUN must be a new
 
 Construct COMMAND using `/home/user/codex-work/.codex/es/locate.py --repo REPO
 --task-file TASK --state-dir STATE --out-dir RUN` with `python3` as the executable.
-The default call uses Gemini 3.8 Flash Medium. Add options as needed:
+The default call uses Gemini 3.8 Flash High. Add options as needed:
 
 - `--scope DIR` narrows Explorer's Git-tracked working-tree sources;
   `--include-untracked` adds non-ignored untracked files.

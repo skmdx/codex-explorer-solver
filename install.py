@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
-def install(repo: Path, *, apply: bool, model: str = "gemini-3.8-flash-medium", deep_model: str = "gemini-3.8-flash-high") -> list[str]:
+def install(repo: Path, *, apply: bool, model: str = "gemini-3.8-flash-high", deep_model: str = "gemini-3.8-flash-high") -> list[str]:
     repo = repo.resolve(strict=True)
     if not repo.is_dir() or not (repo / ".git").exists():
         raise ValueError("repo must be a Git repository root (worktrees are supported)")
@@ -61,7 +61,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--apply", action="store_true", help="without this flag, only show the plan")
-    parser.add_argument("--model", default="gemini-3.8-flash-medium")
+    parser.add_argument("--model", default="gemini-3.8-flash-high")
     parser.add_argument("--deep-model", default="gemini-3.8-flash-high", help="extra AGY exploration, not the Codex parent model")
     args = parser.parse_args()
     try:

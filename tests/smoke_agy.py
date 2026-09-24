@@ -59,7 +59,7 @@ def main():
             assert 'return 1' in report['evidence']['primary'][0]['source']
             return json.loads((base/name/'metrics.json').read_text())
         initial=run('explorer');deep=run('deep',['--deep'])
-        assert initial['effective_model']=='gemini-3.8-flash-medium'
+        assert initial['effective_model']=='gemini-3.8-flash-high'
         assert deep['effective_model']=='gemini-3.8-flash-high'
         assert budget.status(state)['attempts']==2
         assert hashlib.sha256(source.read_bytes()).hexdigest()==source_hash

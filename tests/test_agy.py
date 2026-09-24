@@ -218,7 +218,7 @@ class AgyRunnerTests(Fixture):
         self.assertFalse(self.metrics()['task_usage_recorded'])
     def test_localize_validated_and_no_codex(self):
         r=self.invoke();self.assertEqual(r.returncode,0,r.stderr+r.stdout)
-        m=self.metrics();self.assertEqual(m['backend'],'agy');self.assertEqual(m['requested_model'],'gemini-3.8-flash-medium')
+        m=self.metrics();self.assertEqual(m['backend'],'agy');self.assertEqual(m['requested_model'],'gemini-3.8-flash-high')
         self.assertNotIn('codex',m['argv']);self.assertFalse((self.repo/'.codex/agents').exists())
         h=json.loads((self.base/'run/handoff.json').read_text());self.assertEqual(h['primary'][0]['sha256'],hashlib.sha256((self.repo/'src/example.py').read_bytes()).hexdigest())
     def test_reader_returns_verified_citations_without_source_in_argv(self):

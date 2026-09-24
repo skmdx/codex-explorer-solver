@@ -293,17 +293,18 @@ class ConfigInstallerTests(unittest.TestCase):
             root=Path(tmp); (root/'.git').mkdir(); (root/'.codex').mkdir()
             config=root/'.codex/config.toml'; config.write_text('[agents]\nenabled=false\n')
             agents=root/'AGENTS.md'; agents.write_text('Existing project instructions.\n')
-            install(root,apply=False,model='gemini-3.8-flash-medium',deep_model='gemini-3.8-flash-high')
+            install(root,apply=False)
             self.assertFalse((root/'.codex/es').exists())
-            files=install(root,apply=True,model='gemini-3.8-flash-medium',deep_model='gemini-3.8-flash-high')
+            files=install(root,apply=True)
             self.assertGreater(len(files),5)
             self.assertEqual(config.read_text(),'[agents]\nenabled=false\n')
             self.assertEqual(agents.read_text(),'Existing project instructions.\n')
             role=tomllib.loads((root/'.codex/es/agy.toml').read_text())
-            self.assertEqual(role['explorer_model'],'gemini-3.8-flash-medium')
+            self.assertEqual(role['explorer_model'],'gemini-3.8-flash-high')
+            self.assertEqual(role['reader_model'],'gemini-3.8-flash-high')
             with self.assertRaises(ValueError):
-                install(root,apply=True,model='gemini-3.8-flash-high',deep_model='gemini-3.8-flash-high')
-            self.assertEqual(tomllib.loads((root/'.codex/es/agy.toml').read_text())['explorer_model'],'gemini-3.8-flash-medium')
+                install(root,apply=True,model='gemini-3.8-flash-medium')
+            self.assertEqual(tomllib.loads((root/'.codex/es/agy.toml').read_text())['explorer_model'],'gemini-3.8-flash-high')
 
     def test_install_symlink_destination_rejected(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:

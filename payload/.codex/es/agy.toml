@@ -1,6 +1,6 @@
 # This is this kit's configuration, NOT an Antigravity native settings file.
 # Model availability is reported by AGY when invoked.
 executable = "agy"
-explorer_model = "gemini-3.8-flash-medium"
-reader_model = "gemini-3.8-flash-medium"
+explorer_model = "gemini-3.8-flash-high"
+reader_model = "gemini-3.8-flash-high"
 deep_model = "gemini-3.8-flash-high"
