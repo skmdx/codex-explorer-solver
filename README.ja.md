@@ -1,6 +1,6 @@
-# explore-solve
+# Explore → Solve — Codex plugin
 
-Codexがコードを調査するとき、必要な部分だけを読んで修正・テストへ進むためのスキルです。
+Codexがコードを調査するとき、必要な部分だけを読んで修正・テストへ進むためのプラグインです。`explore-solve`スキルと実行ツールを同梱します。
 小さな調査はCodexが直接行い、大量のソースを読む独立した調査は、Antigravity CLI（`agy`）を通じてGeminiに任せます。
 Geminiからは関連するファイルと行番号を受け取り、Codexがその原文を確認して実装します。
 
@@ -9,10 +9,10 @@ Geminiからは関連するファイルと行番号を受け取り、Codexがそ
 
 ## 使い方
 
-このワークスペースでは導入済みで、コード調査に応じて自動選択されます。対象のGitリポジトリでCodexを開き、通常どおり依頼してください。明示的に使う場合は `$explore-solve` を付けることもできます。
+この環境では個人marketplaceの`codex-explorer-solver@personal`として導入済みです。新しいスレッドで、コード調査に応じてスキルが自動選択されます。対象のGitリポジトリでCodexを開き、通常どおり依頼してください。明示的に使う場合はスキル一覧から`explore-solve`を選択できます。
 
 ```text
-$explore-solve
+$codex-explorer-solver:explore-solve
 ログイン失敗時に同じ通知が2回表示される原因を調べて修正してください。
 修正後は関連するテストを実行してください。
 ```
@@ -54,14 +54,26 @@ AGYの処理中は実行側のコードで待ち、完了結果をCodexへ返し
 
 | 用途 | 場所 |
 |---|---|
-| Codexが読むスキル | [SKILL.md](payload/.agents/skills/explore-solve/SKILL.md) |
+| Codexが読むスキル | [SKILL.md](skills/explore-solve/SKILL.md) |
 | AGYのモデル設定 | [agy.toml](payload/.codex/es/agy.toml) |
-| 共通ツールの入口 | `/home/user/codex-work/.codex/es` |
+| プラグイン定義 | [.codex-plugin/plugin.json](.codex-plugin/plugin.json) |
+| 実行ツール | インストールされたプラグイン内の `payload/.codex/es` |
 | 作業中のソースコピー・ログ | `/home/user/codex-work/tmp` 以下のタスク別ディレクトリ |
 
-スキルは `/home/user/.codex/skills/explore-solve` から、このリポジトリの実体を参照しています。
-共通ツールの入口も `payload/.codex/es` へのリンクです。このリポジトリを修正すると、導入済みのスキルとツールに反映されます。
+スキルは自身の配置場所から同梱ツールを参照します。対象リポジトリへのツールコピーや、ワークスペース固定のリンクは不要です。
+導入済みプラグインはCodexのキャッシュにあるため、このリポジトリの変更を反映するには再インストールします。
 ログの保存には `capture.py` を使います。自動Hooksは登録していません。
+
+## 更新
+
+この環境の個人marketplaceは`~/plugins/codex-explorer-solver`からこのリポジトリを参照しています。
+変更後はplugin-creatorの`update_plugin_cachebuster.py`でバージョンのキャッシュ識別子を更新し、次を実行します。
+
+```bash
+codex plugin add codex-explorer-solver@personal
+```
+
+新しいスレッドで更新後のスキルが読み込まれます。Python依存ライブラリと認証済みの`agy`はホスト側に必要です。
 
 ## 開発・動作確認
 

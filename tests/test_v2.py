@@ -14,7 +14,6 @@ sys.path.insert(0,str(KIT/'payload/.codex/es'));sys.path.insert(0,str(KIT))
 import budget
 import gateway
 import read_guard
-import upgrade
 from capture import capture
 from evidence import EvidenceError,source_path
 
@@ -240,32 +239,6 @@ class CaptureTests(unittest.TestCase):
     def test_missing_executable_reported(self):
         r,code=capture(self.root,self.base/'run',['/nonexistent/command'])
         self.assertEqual(code,127);self.assertEqual(r['termination_reason'],'launch_failed')
-
-
-class UpgradeTests(unittest.TestCase):
-    def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.base=Path(self.temp.name);self.kit=self.base/'kit';self.repo=self.base/'repo'
-        (self.kit/'payload/.codex/es').mkdir(parents=True);(self.repo/'.git').mkdir(parents=True);(self.repo/'.codex/es').mkdir(parents=True)
-        (self.kit/'payload/.codex/es/a.py').write_text('new')
-        (self.kit/'payload/.codex/es/b.py').write_text('added')
-        (self.repo/'.codex/es/a.py').write_text('old')
-        (self.repo/'.codex/config.toml').write_text('preserve')
-        (self.kit/'legacy-payload-sha256.json').write_text(json.dumps({'.codex/es/a.py':hashlib.sha256(b'old').hexdigest()}))
-        self.oldroot=upgrade.ROOT;upgrade.ROOT=self.kit
-    def tearDown(self):upgrade.ROOT=self.oldroot;self.temp.cleanup()
-    def test_dry_run_changes_nothing(self):
-        self.assertEqual(len(upgrade.upgrade(self.repo)),2);self.assertEqual((self.repo/'.codex/es/a.py').read_text(),'old')
-    def test_backup_and_replace(self):
-        backup=self.base/'backup';upgrade.upgrade(self.repo,True,backup)
-        self.assertEqual((backup/'.codex/es/a.py').read_text(),'old')
-        self.assertEqual((self.repo/'.codex/es/a.py').read_text(),'new')
-        self.assertEqual((self.repo/'.codex/config.toml').read_text(),'preserve')
-    def test_local_edits_refuse_all_changes(self):
-        (self.repo/'.codex/es/a.py').write_text('user customization')
-        with self.assertRaisesRegex(ValueError,'locally modified'):upgrade.upgrade(self.repo,True,self.base/'backup')
-        self.assertFalse((self.repo/'.codex/es/b.py').exists());self.assertFalse((self.base/'backup').exists())
-    def test_rerun_updated_files_skips(self):
-        upgrade.upgrade(self.repo,True,self.base/'backup');self.assertEqual(upgrade.upgrade(self.repo),[])
 
 
 if __name__=='__main__': unittest.main()

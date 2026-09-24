@@ -10,7 +10,7 @@
 プロセス制御はLinux・macOS・WSLを対象にしています。
 
 ```bash
-ES=/home/user/codex-work/.codex/es
+ES=/absolute/plugin/path/payload/.codex/es
 RUN=$(mktemp -d /home/user/codex-work/tmp/explore-solve.XXXXXX)
 
 cat > "$RUN/task.txt" <<'TASK'
@@ -51,7 +51,7 @@ JSONは`root`（LSPのworkspacePathの絶対パス）と`queries`（問い合わ
 範囲外の候補は未調査の手掛かりであり、元リポジトリを直接読む指示にはしません。
 
 Codexは必要な定義・参照・呼出し関係だけを指定します。LSP結果の保存とAGY起動を同じセルで行い、
-結果全文をCodexへ表示して転記する往復を省きます。具体例は[AGY参照手順](../payload/.agents/skills/explore-solve/references/agy.md#optional-lsp-starting-locations)にあります。
+結果全文をCodexへ表示して転記する往復を省きます。具体例は[AGY参照手順](../skills/explore-solve/references/agy.md#optional-lsp-starting-locations)にあります。
 LSPだけで回答できる問いにはAGYを使いません。LSP結果からexport範囲を自動縮小せず、
 Geminiは足りない条件・呼出し・テストを追加探索します。失敗した問い合わせも結果と区別して渡します。
 入力は`RUN/navigation.json`に保存します。その回の探索用で、STATEへの蓄積は行いません。
@@ -133,7 +133,7 @@ AGYの全体ツール一覧は、実際に呼び出せるツールの一覧と�
 この制御はCLIの動作を検査するもので、OSの隔離環境を作るものではありません。
 認証・モデル・応答形式の問題で失敗した場合、自動で再実行したり別モデルへ切り替えたりしません。
 
-Codex側の起動と待機は[AGY参照手順](../payload/.agents/skills/explore-solve/references/agy.md#invoke)の一つのセルで行います。
+Codex側の起動と待機は[AGY参照手順](../skills/explore-solve/references/agy.md#invoke)の一つのセルで行います。
 
 ## 同時実行と使用量
 

@@ -17,7 +17,6 @@ sys.path.insert(0, str(KIT / 'payload/.codex/es'))
 sys.path.insert(0, str(KIT))
 from evidence import (EvidenceError, load_handoff, read_range,
                       verify_handoff, validate_shape, source_path, format_evidence)
-from install import install
 
 
 class EvidenceTests(unittest.TestCase):
@@ -271,47 +270,14 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(load_handoff(json.dumps(self.data).encode()), self.data)
 
 
-class ConfigInstallerTests(unittest.TestCase):
-    def test_explicit_provider_models_are_installed(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); (root/'.git').mkdir()
-            install(root, apply=True, model='gemini-3.7-flash-medium', deep_model='gemini-3.1-pro-high')
-            config = tomllib.loads((root/'.codex/es/agy.toml').read_text())
-            self.assertEqual(config['reader_model'], 'gemini-3.7-flash-medium')
-            self.assertEqual(config['deep_model'], 'gemini-3.1-pro-high')
-    def test_parent_delegation_is_disabled(self):
-        self.assertFalse((KIT/'payload/.codex/agents').exists())
-        cfg=tomllib.loads((KIT/'payload/.codex/es/config.snippet.toml').read_text())
-        self.assertFalse(cfg['agents']['enabled'])
-
-    def test_skill_allows_implicit_invocation(self):
-        text=(KIT/'payload/.agents/skills/explore-solve/agents/openai.yaml').read_text()
-        self.assertIn('allow_implicit_invocation: true',text)
-
-    def test_create_only_install_preserves_existing_config(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp); (root/'.git').mkdir(); (root/'.codex').mkdir()
-            config=root/'.codex/config.toml'; config.write_text('[agents]\nenabled=false\n')
-            agents=root/'AGENTS.md'; agents.write_text('Existing project instructions.\n')
-            install(root,apply=False)
-            self.assertFalse((root/'.codex/es').exists())
-            files=install(root,apply=True)
-            self.assertGreater(len(files),5)
-            self.assertEqual(config.read_text(),'[agents]\nenabled=false\n')
-            self.assertEqual(agents.read_text(),'Existing project instructions.\n')
-            role=tomllib.loads((root/'.codex/es/agy.toml').read_text())
-            self.assertEqual(role['explorer_model'],'gemini-3.8-flash-high')
-            self.assertEqual(role['reader_model'],'gemini-3.8-flash-high')
-            with self.assertRaises(ValueError):
-                install(root,apply=True,model='gemini-3.8-flash-medium')
-            self.assertEqual(tomllib.loads((root/'.codex/es/agy.toml').read_text())['explorer_model'],'gemini-3.8-flash-high')
-
-    def test_install_symlink_destination_rejected(self):
-        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
-            root=Path(tmp); (root/'.git').mkdir(); (root/'.codex').symlink_to(outside)
-            with self.assertRaises(ValueError):
-                install(root,apply=True,model='gemini-3.8-flash-medium',deep_model='gemini-3.8-flash-high')
-            self.assertEqual(list(Path(outside).iterdir()),[])
-
+class PluginTests(unittest.TestCase):
+    def test_plugin_skill_resolves_bundled_tools(self):
+        manifest=json.loads((KIT/'.codex-plugin/plugin.json').read_text())
+        skill=KIT/manifest['skills']/'explore-solve'
+        tools=(skill/'../../payload/.codex/es').resolve()
+        self.assertTrue((skill/'SKILL.md').is_file())
+        for name in ('locate.py','capture.py','agy.toml'):
+            self.assertTrue((tools/name).is_file(),name)
+        self.assertIn('allow_implicit_invocation: true',(skill/'agents/openai.yaml').read_text())
 
 if __name__=='__main__': unittest.main()

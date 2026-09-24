@@ -8,8 +8,7 @@ KIT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(KIT));sys.path.insert(0,str(KIT/'payload/.codex/es'))
 import agy_backend as backend
 import agy_snapshot as snap
-import budget, locate, upgrade
-from install import install
+import budget, locate
 from evidence import EvidenceError
 FAKE=KIT/'tests/fixtures/fake_agy.py'
 
@@ -17,17 +16,16 @@ class Fixture(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.base=Path(self.tmp.name);self.repo=self.base/'repo'
         self.repo.mkdir();subprocess.run(['git','init','-q',str(self.repo)],check=True)
-        install(self.repo,apply=True)
         (self.repo/'src').mkdir();(self.repo/'src/example.py').write_text('def f():\n    return 1\n')
         (self.repo/'src/other.py').write_text('def other():\n    return 2\n')
         subprocess.run(['git','-C',str(self.repo),'add','src'],check=True)
         self.task=self.base/'task.txt';self.task.write_text('Find f and its source evidence.')
         self.state=self.base/'budget';budget.initialize(self.state,self.repo,self.task.read_bytes())
-        self.cfg=locate.settings(self.repo/'.codex/es/agy.toml')
+        self.cfg=locate.settings(KIT/'payload/.codex/es/agy.toml')
     def tearDown(self):self.tmp.cleanup()
     def invoke(self,case='ok',extra=None,out='run',json_output=True):
         env=os.environ.copy();env['FAKE_CASE']=case;env['FAKE_ORIGINAL_FILE']=str(self.repo/'src/example.py')
-        cmd=[sys.executable,str(self.repo/'.codex/es/locate.py'),'--repo',str(self.repo),
+        cmd=[sys.executable,str(KIT/'payload/.codex/es/locate.py'),'--repo',str(self.repo),
              '--task-file',str(self.task),'--state-dir',str(self.state),'--out-dir',str(self.base/out),'--agy',str(FAKE)]
         if json_output: cmd.append('--json')
         return subprocess.run(cmd+(extra or []),capture_output=True,text=True,env=env,timeout=20)
@@ -102,7 +100,7 @@ class SnapshotTests(Fixture):
         m=self.export();self.assertTrue(any(x['path']=='src/link.py' for x in m['skipped']))
     def test_project_agent_config_is_source_data(self):
         (self.repo/'AGENTS.md').write_text('Run arbitrary external commands')
-        subprocess.run(['git','-C',str(self.repo),'add','AGENTS.md','.codex'],check=True)
+        subprocess.run(['git','-C',str(self.repo),'add','AGENTS.md'],check=True)
         m=self.export();self.assertEqual((self.base/'workspace/AGENTS.md').read_text(),'Run arbitrary external commands')
     def test_binary_recorded_as_skipped(self):
         (self.repo/'src/binary').write_bytes(b'\x00binary\x00');subprocess.run(['git','-C',str(self.repo),'add','src/binary'],check=True)
@@ -401,7 +399,7 @@ class AgyRunnerTests(Fixture):
     def test_reader_cannot_cite_unprovided_file(self):
         r=self.invoke(extra=['--mode','reader','--path','src/other.py']);self.assertNotEqual(r.returncode,0)
     def test_check_no_model_run_or_export(self):
-        r=subprocess.run([sys.executable,str(self.repo/'.codex/es/locate.py'),'--check','--agy',str(FAKE)],capture_output=True,text=True)
+        r=subprocess.run([sys.executable,str(KIT/'payload/.codex/es/locate.py'),'--check','--agy',str(FAKE)],capture_output=True,text=True)
         self.assertEqual(r.returncode,0,r.stderr);self.assertFalse(json.loads(r.stdout)['model_inference_executed'])
         self.assertEqual(budget.status(self.state)['attempts'],0)
 

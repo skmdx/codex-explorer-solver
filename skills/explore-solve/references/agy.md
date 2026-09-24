@@ -8,10 +8,11 @@ pass known findings and ask only for missing evidence.
 ## Invoke
 
 Run at the target Git root. Write the collection request to TASK. Use absolute paths
-under `/home/user/codex-work/tmp` for TASK, STATE, and RUN, outside the target Git
+in the workspace's temporary directory for TASK, STATE, and RUN, outside the target Git
 repository. STATE is created on first use and reused for this task; RUN must be new.
 
-Construct COMMAND with `python3 /home/user/codex-work/.codex/es/locate.py --repo REPO
+Use ES resolved from SKILL.md (not from this reference directory).
+Construct COMMAND with `python3 ES/locate.py --repo REPO
 --task-file TASK --state-dir STATE --out-dir RUN`. The default model is Gemini 3.8
 Flash High. Add only options the investigation needs:
 

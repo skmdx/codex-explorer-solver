@@ -20,7 +20,9 @@ It contains the invocation, mode choices, long wait, and handling of verified or
 After the handoff, make Solver decisions from those originals and read only missing
 context or source that changed.
 
+Resolve ES to the absolute path of `../../payload/.codex/es` relative to this SKILL.md's
+directory. This is the installed plugin's tools directory, not the target repository.
 For tests/builds with large output, use
-`python3 /home/user/codex-work/.codex/es/capture.py --repo REPO --out-dir TEST_RUN -- COMMAND ARGS`.
+`python3 ES/capture.py --repo REPO --out-dir TEST_RUN -- COMMAND ARGS`, replacing ES with that path.
 Use a new output directory outside the target repository and inspect the saved logs
 only where the returned exit status and tails do not settle the result.

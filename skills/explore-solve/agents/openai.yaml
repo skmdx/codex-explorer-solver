@@ -1,6 +1,6 @@
 interface:
   display_name: "Explore → Solve"
   short_description: "Bounded localization, exact-source implementation"
-  default_prompt: "Use $explore-solve for this repository task."
+  default_prompt: "Use $codex-explorer-solver:explore-solve for this repository task."
 policy:
   allow_implicit_invocation: true

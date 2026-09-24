@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Local real-subprocess + synthetic Codex-hook-envelope test. No Codex/model/API.
 
-Optionally supply the actual prior v2 ZIP to verify that upgrade path as well.
 The intentionally failing unittest below is a fixture, not a kit test failure.
 """
 from __future__ import annotations
@@ -9,24 +8,22 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
-import zipfile
 
 KIT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(KIT));sys.path.insert(0,str(KIT/'payload/.codex/es'))
-from install import install
-from upgrade import upgrade
 from configure_hooks import configure
 from hook_store import Store, canonical
 from hook_artifacts import search, read_lines
 
 
 def main():
-    ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--v2-zip',type=Path);a=ap.parse_args()
+    argparse.ArgumentParser(description=__doc__).parse_args()
     with tempfile.TemporaryDirectory() as td:
         base=Path(td);repo=base/'repo';repo.mkdir();(repo/'.git').mkdir()
         (repo/'.codex').mkdir()
@@ -35,17 +32,7 @@ def main():
         hp=repo/'.codex/hooks.json';hp.write_text(json.dumps(original_hooks))
         cp=repo/'.codex/config.toml';cp.write_bytes(config);(repo/'AGENTS.md').write_bytes(agents)
         old_hooks=hp.read_bytes()
-        if a.v2_zip:
-            with zipfile.ZipFile(a.v2_zip) as z:
-                prefix='codex-explorer-solver-v2/payload/'
-                for name in z.namelist():
-                    if name.startswith(prefix) and not name.endswith('/'):
-                        rel=PurePosixPath(name[len(prefix):])
-                        assert not rel.is_absolute() and '..' not in rel.parts
-                        target=repo/rel;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(z.read(name))
-            upgrade(repo,True,base/'upgrade-backup')
-        else:
-            install(repo,apply=True)
+        shutil.copytree(KIT/'payload/.codex/es',repo/'.codex/es',ignore=shutil.ignore_patterns('__pycache__'))
         assert hp.read_bytes()==old_hooks and cp.read_bytes()==config and (repo/'AGENTS.md').read_bytes()==agents
         state=base/'state'
         configure(repo,state,mode='audit',apply=True,backup=base/'hooks-backup-1')
@@ -87,7 +74,6 @@ class Fixture(unittest.TestCase):
         before=len(canonical(response));after=len(canonical(out))
         result={'kind':'local_subprocess_and_synthetic_hook_envelope_smoke',
                 'real_codex_integration':False,'model_calls':0,
-                'upgrade_from_supplied_v2_zip_verified':bool(a.v2_zip),
                 'existing_agents_config_and_unrelated_hooks_preserved':True,
                 'audit_to_enforce_update_and_remove_verified':True,
                 'original_command_executions':1,'intentionally_failing_fixture_exit_code':run.returncode,

@@ -1,0 +1,20 @@
+{
+  "name": "codex-explorer-solver",
+  "version": "0.1.0+codex.20260924110403",
+  "description": "Source investigation with Symbols, AGY evidence collection, and exact-source implementation.",
+  "author": {
+    "name": "skmdx"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Explore \u2192 Solve",
+    "shortDescription": "Source exploration and evidence for Codex",
+    "longDescription": "Use direct source lookup or delegate evidence collection to Gemini through AGY. Codex evaluates the evidence, implements changes, and tests them.",
+    "developerName": "skmdx",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "\u30b3\u30fc\u30c9\u3092\u8abf\u67fb\u3057\u3001\u5fc5\u8981\u306a\u6839\u62e0\u3092\u96c6\u3081\u3066\u4fee\u6b63\u30fb\u30c6\u30b9\u30c8\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+    ]
+  }
+}

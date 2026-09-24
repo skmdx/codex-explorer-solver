@@ -9,7 +9,6 @@ from pathlib import Path
 import subprocess,sys,tempfile
 KIT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(KIT));sys.path.insert(0,str(KIT/'payload/.codex/es'))
-from install import install
 import budget
 
 def main():
@@ -21,14 +20,14 @@ def main():
         p.error('--run-models is required; this check consumes real provider quota')
     base=Path(tempfile.mkdtemp(prefix='codex-agy-live-'));os.chmod(base,0o700)
     repo=base/'repo';repo.mkdir();subprocess.run(['git','init','-q',str(repo)],check=True)
-    install(repo,apply=True);(repo/'src').mkdir()
+    (repo/'src').mkdir()
     (repo/'src/example.py').write_text('def normalize(text):\n    return text.strip()\n\ndef dispatch(text):\n    return normalize(text)\n')
     subprocess.run(['git','-C',str(repo),'add','src'],check=True)
     task=base/'task.txt';task.write_text('Find dispatch and the function it calls to normalize text. Return exact source references only.\n')
     state=base/'budget';budget.initialize(state,repo,task.read_bytes())
     reports=[];ok=True
     for name,extra in [('reader',['--mode','reader','--path','src/example.py']),('explorer',[])]:
-        cmd=[sys.executable,str(repo/'.codex/es/locate.py'),'--repo',str(repo),'--task-file',str(task),
+        cmd=[sys.executable,str(KIT/'payload/.codex/es/locate.py'),'--repo',str(repo),'--task-file',str(task),
              '--state-dir',str(state),'--out-dir',str(base/name),'--agy',a.agy,'--timeout',str(a.timeout),*extra]
         r=subprocess.run(cmd,capture_output=True,text=True)
         reports.append({'role':name,'exit_code':r.returncode,'stdout':r.stdout,'stderr':r.stderr})
