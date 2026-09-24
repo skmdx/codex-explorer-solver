@@ -3,4 +3,4 @@ interface:
   short_description: "Bounded localization, exact-source implementation"
   default_prompt: "Use $explore-solve for this repository task."
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true

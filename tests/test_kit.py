@@ -284,9 +284,9 @@ class ConfigInstallerTests(unittest.TestCase):
         cfg=tomllib.loads((KIT/'payload/.codex/es/config.snippet.toml').read_text())
         self.assertFalse(cfg['agents']['enabled'])
 
-    def test_skill_is_explicit_opt_in(self):
+    def test_skill_allows_implicit_invocation(self):
         text=(KIT/'payload/.agents/skills/explore-solve/agents/openai.yaml').read_text()
-        self.assertIn('allow_implicit_invocation: false',text)
+        self.assertIn('allow_implicit_invocation: true',text)
 
     def test_create_only_install_preserves_existing_config(self):
         with tempfile.TemporaryDirectory() as tmp:
