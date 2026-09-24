@@ -41,6 +41,7 @@ def load_handoff(raw: bytes) -> dict[str, Any]:
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise EvidenceError(f"invalid JSON: {exc}") from exc
     validate_shape(data)
+    data['status'] = collection_status(data)
     return data
 
 
@@ -81,18 +82,12 @@ def validate_shape(data: Any) -> None:
         raise EvidenceError("unresolved must be an array")
     for value in unresolved:
         _string(value, "unresolved")
-    if data["status"] == "ready":
-        if not data["primary"] or unresolved:
-            raise EvidenceError("ready requires primary evidence and no unresolved question")
-    elif data["status"] == "partial":
-        if not data["primary"] or not unresolved:
-            raise EvidenceError("partial requires primary evidence and an unresolved question")
-    elif data["status"] == "not_found":
-        if data["primary"] or data["related"] or not unresolved:
-            raise EvidenceError("not_found requires empty locations and a missing-anchor explanation")
-    elif data["status"] == "blocked":
-        if data["primary"] or data["related"] or not unresolved:
-            raise EvidenceError("blocked requires empty locations and an environment explanation")
+
+
+def collection_status(data: dict[str, Any]) -> str:
+    if data['primary'] or data['related']:
+        return 'partial' if data['unresolved'] else 'ready'
+    return 'blocked' if data['status'] == 'blocked' else 'not_found'
 
 
 def source_path(root: Path, relative: str) -> Path:
@@ -157,7 +152,7 @@ def _render_range(relative: str, lines: list[str], digest: str, start: int, end:
 def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = False) -> dict[str, Any]:
     validate_shape(data)
     sources: dict[tuple[str, str], tuple[list[str], str]] = {}
-    result: dict[str, Any] = {"ok": True, "status": data["status"],
+    result: dict[str, Any] = {"ok": True, "status": collection_status(data),
         "locations": len(data["primary"]) + len(data["related"]),
         "semantic_relevance_verified": False}
     for category in ("primary", "related"):
@@ -177,6 +172,33 @@ def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = F
     if include_source:
         result.update(unresolved=data["unresolved"])
     return result
+
+
+def format_evidence(data: dict[str, Any]) -> str:
+    """Render verified excerpts, displaying overlapping source lines once."""
+    files: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for category in ("primary", "related"):
+        for item in data[category]:
+            key = (item['path'], item['sha256'], item['encoding'])
+            entry = files.setdefault(key, dict(facts=[], lines={}))
+            fact = f"{item['start']}-{item['end']} {item['symbol']}: {item['evidence']}"
+            if fact not in entry['facts']:
+                entry['facts'].append(fact)
+            entry['lines'].update(enumerate(item['source'].split('\n'), item['start']))
+    sections = []
+    for (path, _, _), entry in files.items():
+        source = []
+        previous = None
+        for number, line in sorted(entry['lines'].items()):
+            if previous is not None and number > previous + 1:
+                source.append('...')
+            source.append(line)
+            previous = number
+        sections.append('\n'.join([path, *entry['facts'], '',
+                                   *source]))
+    if data.get('unresolved'):
+        sections.append('Unresolved:\n' + '\n'.join(data['unresolved']))
+    return '\n\n'.join(sections)
 
 
 def main() -> int:

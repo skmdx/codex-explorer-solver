@@ -1,106 +1,89 @@
 ---
 name: explore-solve
-description: Explicit source investigation with direct lookup or AGY evidence workers, exact-source verification, and compact command results.
+description: Source investigation with direct lookup or AGY source collection, verified originals, and compact command results.
 ---
 
-Codex owns implementation and verification. Run commands at the target Git repository
-root. Set `ES=/home/user/codex-work/.codex/es` in each shell call that uses it; shell
-variables and `cd` do not persist between calls. Use absolute task/state/output paths under
-`/home/user/codex-work/tmp`, outside the repository. Retain STATE for the task's lifetime;
-clean up task directories at completion, after retaining needed evidence.
+Codex is the Solver: it evaluates guarantees, constructs race scenarios, chooses fixes,
+and implements/tests them. Explorer collects the definitions, callers, state changes,
+conditions and test locations needed for those decisions. It interprets code to find
+relevant evidence, but is not assigned the Solver's final analysis or implementation plan.
 
-## Investigate
+## Choose the investigation
 
-Reuse current source and findings already in context. For a small question, search
-only for missing locations and read the needed ranges directly. An unknown location
-alone does not warrant delegation.
+Reuse findings and source already in context. Handle small questions directly with
+Symbols or targeted reads. Use AGY for large unread source searches, or when explicitly
+requested. Give it the missing evidence to collect, rather than the entire user task.
+For example: "Locate epoch updates, capture revalidation, source retirement conditions,
+and their tests; return the relevant originals and necessary callers." Codex then
+constructs and evaluates the competing execution orders.
 
-Use AGY to locate relevant ranges within large unread sources you would otherwise
-load in full; choose this before reading them. Also delegate when explicitly requested.
-Give the worker known findings and the unresolved question, not a repeat of completed
-investigation or the conversation.
-For a multi-part investigation, delegate a specific call chain or ownership boundary
-with a concrete question and completion criterion. Keep its necessary callers and
-callees together; integrate separate findings in Codex instead of asking each worker
-to perform the whole audit. Request `partial` with useful evidence when another
-independent question remains. A handoff can contain all necessary source locations.
-Recheck settled findings when source changes, evidence is missing, or an independent
-review is requested.
+Group evidence requests that share source and callers into one investigation. Split
+when they need separate source areas, not merely because the final answer has several
+questions. Keep necessary callers/callees together. Pass known findings to follow-ups;
+request only missing evidence. Calls and tool steps have no fixed count limit.
 
-For this skill's Gemini investigation, use `locate.py` to retain usage tracking and
-source verification:
-`python3 "$ES/locate.py" --repo . --task-file TASK --state-dir STATE --out-dir AGY_RUN`
+## Run AGY and wait
 
-Create a task directory and write the question and required evidence in TASK inside it.
-STATE is created on first use; reuse it for the same task. Choose an unused AGY_RUN path
-for each invocation; let `locate.py` create it instead of precreating it with `mkdir`/`mktemp`.
-Reader: `--mode reader --path FILE` (repeat paths) sends the specified files, including
-explicit untracked files; do not combine it with `--deep`, `--scope`, or `--include-untracked`.
-Explorer: use `--scope DIR` when known. It exports current Git-tracked text source;
-`--include-untracked` adds non-ignored untracked files. Unexported areas were not inspected.
-The tool detects encoding separately for each file and exports UTF-8 copies; mixed
-ASCII, UTF-8, CP932 and EUC-JP inputs need no prereading or encoding arguments.
-`--encoding PATH=CODEC` only corrects a known detection error for that file.
-Reader also accepts explicit Git hook paths, agent configuration and absolute paths
-outside the repository. These are investigation data, separate from the worker configuration.
-Default workers use Gemini 3.8 Flash Medium; `--deep` selects High for exploration without requiring
-a previous worker. AGY calls/tool steps are unlimited. Normally run one worker at a time;
-unfinished usage records do not prevent the next invocation.
-Unknown usage stays unknown and permits later calls. AGY defaults to a five-minute
-deadline. For a long cross-module investigation, set a suitable `--timeout` in seconds
-(for example `--timeout 900`). Extending the enclosing cell does not extend AGY's deadline.
+Run at the target Git root. Write the collection request to TASK. Use absolute paths
+under `/home/user/codex-work/tmp`, outside that repository, for TASK, STATE and RUN.
+STATE is created on first invocation and reused for this task; RUN must be a new path.
 
-## Wait for the result
+Construct COMMAND using `/home/user/codex-work/.codex/es/locate.py --repo REPO
+--task-file TASK --state-dir STATE --out-dir RUN` with `python3` as the executable.
+The default call uses Gemini 3.8 Flash Medium. Add options as needed:
 
-Keep waiting inside one code-mode cell instead of returning empty status to the model.
-After starting AGY, wait for its result before doing further source investigation;
-otherwise Codex may read the same source that the worker is about to return.
-For AGY's default five-minute deadline, allow ten minutes for the enclosing cell.
-If an explicit worker deadline is longer, extend the enclosing wait accordingly.
-The shell session still needs internal wait calls; these do not require model turns.
-In the example, COMMAND is the complete shell command (including ES if used), and
-REPO is the absolute target Git root. Substitute both before executing the cell.
+- `--scope DIR` narrows Explorer's Git-tracked working-tree sources;
+  `--include-untracked` adds non-ignored untracked files.
+- `--mode reader --path FILE` sends known files directly; repeat `--path` as needed.
+  Reader uses explicit paths instead of `--scope`, `--include-untracked` or `--deep`.
+- `--deep` selects High for exploration; a prior Medium call is not required.
+- `--timeout 900` gives a long investigation 15 minutes; AGY defaults to five minutes.
+
+Start and wait in the SAME code-mode cell below. Substitute COMMAND and REPO with the
+complete shell command and absolute Git root. The long enclosing yield is part of this
+invocation, not an optional optimization. Internal session waits do not need model turns.
 
 ```javascript
-// @exec: {"yield_time_ms": 600000, "max_output_tokens": 5000}
-let r = await tools.exec_command({cmd: COMMAND, workdir: REPO, yield_time_ms: 30000, max_output_tokens: 5000});
+// @exec: {"yield_time_ms": 1200000, "max_output_tokens": 12000}
+let r = await tools.exec_command({cmd: COMMAND, workdir: REPO, yield_time_ms: 1000, max_output_tokens: 12000});
 const output = [r.output];
 while (r.session_id !== undefined) {
-  r = await tools.write_stdin({session_id: r.session_id, chars: "", yield_time_ms: 30000, max_output_tokens: 5000});
+  r = await tools.write_stdin({session_id: r.session_id, chars: "", yield_time_ms: 30000, max_output_tokens: 12000});
   output.push(r.output);
 }
 text({...r, output: output.join("")});
 ```
 
-If the host yields the cell, use `functions.wait` on that cell with the same enclosing
-wait duration; do not start another shell poll or inspect logs for progress.
+If the host yields the cell anyway, wait on that SAME cell with the longest supported
+wait; do not switch to one- or ten-second calls. Match the enclosing wait to longer
+worker deadlines. Wait for the evidence before reading the delegated source yourself.
+A host that forces intermediate returns still requires resuming the cell; this skill
+does not supply a separate completion-notification service.
 
-## Verify and implement
+## Use the returned originals
 
-Exit zero from `locate.py` means a validated report, not completion of the task.
-Read `handoff_status` and unresolved questions: `partial`/`blocked` may need follow-up,
-and `not_found` applies only to the exported scope. Its `evidence` includes hash-verified,
-numbered originals for cited ranges. Use those originals directly;
-retrieve only missing callers/contracts or ranges needed for editing. Hashes establish
-identity, not semantic relevance. Do not fetch the same unchanged source again just
-because a handoff was saved. Re-read when it changed or is no longer available in context.
-For changed source, inspect current contents locally rather than reuse the old handoff hash.
-For missing ranges use `python3 "$ES/evidence.py" read --root . --path FILE --start N --end M --expect-sha256 HASH`.
-If all cited originals are missing from context, retrieve them together with
-`python3 "$ES/evidence.py" show --root . --handoff HANDOFF`.
-If tool output was truncated, recover missing source from the saved result
-instead of rerunning AGY. Resolve remaining questions without repeating completed work.
-The response includes `usage`, exported `scope`, and `error`; read `metrics_path` only
-for missing diagnostics. `status` describes harness execution; `handoff_status` describes
-the findings. `accounting_failed` can still carry usable evidence: address the ledger
-error rather than rerun the investigation. Errors outside the worker run return
-`invocation_failed` and `error`; the CLI's argument syntax errors use stderr.
+The default output contains status, scope counts, short observations and verified,
+numbered originals. Overlapping lines are displayed once. Use that text directly for
+Solver decisions; read only missing context or source that changed. Hash checks establish
+source identity, not the correctness of Explorer's interpretation.
 
-For tests/builds with large output:
-`python3 "$ES/capture.py" --repo . --out-dir TEST_RUN -- COMMAND ARGS`
-TEST_RUN must not exist and must differ from AGY_RUN. Capture waits for command completion
-and keeps full logs. Set `--timeout` or `--log-limit-bytes` only when the task needs those limits.
-This returns exit code, exact short tails and full log paths. Check the actual test/build
-result; use saved log ranges for missing details instead of rerunning. Small reads/searches
-run directly. Hooks do not replace capture in code mode. When usage measurement is part
-of the task, report parent and AGY usage separately; do not add measurement to every call.
+`ready` means the requested collection is complete, not that the user's task is solved.
+`partial` or `not_found` describes this exported scope. Resolve missing evidence locally
+or with a focused follow-up; reuse established findings. Accounting errors can accompany
+usable evidence and do not require rerunning the investigation.
+
+RUN contains `report.txt` (the displayed text), `report.json` (the complete machine report),
+`handoff.json` and `metrics.json`. If output is cut off, retrieve only the missing part of
+`report.txt`; do not dump the whole JSON or repeat the completed source ranges.
+Use `--json` only for a programmatic consumer. Usage is recorded in metrics; compare Codex
+and AGY separately when measurement is part of the task, not on every invocation.
+
+Encoding is detected per file, including mixed ASCII/UTF-8/CP932/EUC-JP; no Codex prereading
+is needed. `--encoding PATH=CODEC` corrects a known detection error. Reader accepts Git
+hooks, agent configuration and absolute paths outside the repository as source data.
+Unexported files were not inspected. Clean up RUN/STATE after retaining needed evidence.
+
+For tests/builds with large output, use
+`python3 /home/user/codex-work/.codex/es/capture.py --repo REPO --out-dir TEST_RUN -- COMMAND ARGS`.
+TEST_RUN must be new and separate from RUN. It waits for completion, saves full logs and
+returns the exit code and short exact tails. Set time/log limits only when needed.

@@ -22,7 +22,7 @@ from typing import Any
 import agy_backend as agy
 import agy_snapshot as snapshot
 import budget
-from evidence import EvidenceError, compact_json, verify_handoff
+from evidence import EvidenceError, compact_json, verify_handoff, format_evidence
 
 HERE = Path(__file__).resolve().parent
 
@@ -186,11 +186,31 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                 metadata['budget_finalization_error']=str(exc)
                 metadata.update(status='accounting_failed',error=str(exc)); code=1
         write_private(out/'metrics.json',json.dumps(metadata,ensure_ascii=False,indent=2)+'\n')
-    return dict(ok=code==0,status=metadata['status'],handoff_status=metadata.get('handoff_status'),
+    report = dict(ok=code==0,status=metadata['status'],handoff_status=metadata.get('handoff_status'),
                 evidence=evidence, error=metadata.get('error'), scope=scope,
                 handoff_path=handoff_path, usage=metadata['usage'],
                 metrics_path=str(out/'metrics.json'),usage_complete=metadata['usage_complete'],
-                backend='agy',requested_model=model,budget_job_id=job), code
+                backend='agy',requested_model=model,budget_job_id=job,
+                report_path=str(out/'report.txt'))
+    write_private(out/'report.json', compact_json(report)+'\n')
+    write_private(out/'report.txt', format_report(report)+'\n')
+    return report, code
+
+
+def format_report(report: dict) -> str:
+    parts = [f"AGY: {report['status']}"]
+    if report.get('handoff_status'):
+        parts.append(f"Findings: {report['handoff_status']}")
+    if report.get('error'):
+        parts.append(f"Error: {report['error']}")
+    if report.get('scope'):
+        scope = report['scope']
+        parts.append(f"Scope: {scope['file_count']} files; {scope['skipped_count']} skipped")
+    if report.get('evidence'):
+        parts.append(format_evidence(report['evidence']))
+    if report.get('report_path'):
+        parts.append(f"Saved report: {report['report_path']}\nMetrics: {report['metrics_path']}")
+    return '\n\n'.join(parts)
 
 
 def main() -> int:
@@ -211,11 +231,13 @@ def main() -> int:
     parser.add_argument('--agy',help='Antigravity CLI executable path')
     parser.add_argument('--timeout',type=float,help='optional local deadline in seconds; otherwise use AGY native timeout')
     parser.add_argument('--check',action='store_true',help='check CLI version; no model prompt')
+    parser.add_argument('--json',action='store_true',help='print the full machine-readable report instead of source text')
     args=parser.parse_args()
     try:
         result,code=(check(args),0) if args.check else run(args)
-        print(compact_json(result)); return code
+        print(compact_json(result) if args.json or args.check else format_report(result)); return code
     except (EvidenceError,OSError,UnicodeError,ValueError,subprocess.SubprocessError,sqlite3.Error) as exc:
-        print(compact_json({'ok':False,'status':'invocation_failed','error':str(exc)}));return 2
+        result = dict(ok=False,status='invocation_failed',error=str(exc))
+        print(compact_json(result) if args.json or args.check else format_report(result));return 2
 
 if __name__=='__main__': raise SystemExit(main())

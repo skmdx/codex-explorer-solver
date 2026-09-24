@@ -52,10 +52,11 @@ def main():
         def run(name,extra=[]):
             cmd=[sys.executable,str(repo/'.codex/es/locate.py'),'--repo',str(repo),
                  '--task-file',str(task),'--state-dir',str(state),'--out-dir',str(base/name),
-                 '--agy',str(KIT/'tests/fixtures/fake_agy.py'),*extra]
+                 '--agy',str(KIT/'tests/fixtures/fake_agy.py'),'--json',*extra]
             result=subprocess.run(cmd,capture_output=True,text=True,timeout=30)
             assert result.returncode==0,result.stderr+result.stdout
-            assert 'return 1' not in result.stdout
+            report=json.loads(result.stdout)
+            assert 'return 1' in report['evidence']['primary'][0]['source']
             return json.loads((base/name/'metrics.json').read_text())
         initial=run('explorer');deep=run('deep',['--deep'])
         assert initial['effective_model']=='gemini-3.8-flash-medium'

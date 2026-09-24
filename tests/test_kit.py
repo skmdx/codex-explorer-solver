@@ -16,7 +16,7 @@ KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT / 'payload/.codex/es'))
 sys.path.insert(0, str(KIT))
 from evidence import (EvidenceError, load_handoff, read_range,
-                      verify_handoff, validate_shape, source_path)
+                      verify_handoff, validate_shape, source_path, format_evidence)
 from install import install
 
 
@@ -40,6 +40,19 @@ class EvidenceTests(unittest.TestCase):
         result = verify_handoff(self.root, self.data)
         self.assertTrue(result['ok'])
         self.assertFalse(result['semantic_relevance_verified'])
+
+    def test_text_merges_overlaps_and_preserves_facts_and_gaps(self):
+        self.data['related']=[dict(self.site,start=2,end=2,evidence='Second observation'),
+                              dict(self.site,start=5,end=5,evidence='Separate range')]
+        report=verify_handoff(self.root,self.data,include_source=True)
+        rendered=format_evidence(report)
+        self.assertEqual(rendered.count('2:     return normalize(x)'),1)
+        self.assertIn('Second observation',rendered)
+        self.assertIn('Calls normalize before returning.',rendered)
+        self.assertIn('5:     return x.strip()',rendered)
+        self.assertIn('2:     return normalize(x)\n...\n5:',rendered)
+        self.assertNotIn('3: ',rendered)
+        self.assertNotIn(self.site['sha256'],rendered)
 
     def test_read_exact(self):
         result = read_range(self.root, 'src/router.py', 1, 2)
@@ -163,10 +176,18 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(EvidenceError):
             validate_shape(self.data)
 
-    def test_empty_ready_is_invalid(self):
+    def test_empty_ready_is_reported_without_fabricated_evidence(self):
         self.data['primary'] = []
-        with self.assertRaises(EvidenceError):
-            validate_shape(self.data)
+        self.assertEqual(verify_handoff(self.root,self.data)['status'],'not_found')
+
+    def test_labels_do_not_discard_valid_source(self):
+        for status in ['ready','partial','not_found','blocked']:
+            self.data.update(status=status,primary=[],related=[self.site],unresolved=['Missing caller'])
+            report=verify_handoff(self.root,self.data,include_source=True)
+            self.assertEqual(report['status'],'partial')
+            self.assertIn('return normalize',report['related'][0]['source'])
+            self.data['unresolved']=[]
+            self.assertEqual(load_handoff(json.dumps(self.data).encode())['status'],'ready')
 
     def test_partial_and_missing_test(self):
         self.data.update(status='partial',  unresolved=['Registration target not traced.'])

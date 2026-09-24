@@ -14,7 +14,7 @@
         "not_found",
         "blocked"
       ],
-      "description": "ready: primary evidence and no unresolved questions. partial: primary evidence plus unresolved questions. not_found: empty primary/related and explain the missing evidence in unresolved. blocked: empty primary/related and explain the obstacle in unresolved."
+      "description": "Collection label. The host derives ready/partial from references and unresolved items; without references it reports not_found, or preserves blocked for an environment obstacle. Label inconsistencies do not invalidate source evidence."
     },
     "primary": {
       "type": "array",

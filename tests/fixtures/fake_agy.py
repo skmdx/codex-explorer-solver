@@ -53,6 +53,7 @@ if case=='fake_hash':ref['sha256']='0'*64
 if case=='bad_range':ref['end']=999
 wire={'version':3,'status':'ready','primary':[ref],'related':[],'unresolved':[]}
 if case=='partial':wire.update(status='partial',unresolved=['Caller not located.'])
+if case=='ready_with_gap':wire.update(unresolved=['Caller not located.'])
 if case=='not_found':wire.update(status='not_found',primary=[],unresolved=['No matching symbol in exported files.'])
 if case=='blocked':wire.update(status='blocked',primary=[],unresolved=['Fixture permission denial.'])
 # Per-step usage deliberately duplicates the terminal counters: must not be added.

@@ -25,10 +25,11 @@ class Fixture(unittest.TestCase):
         self.state=self.base/'budget';budget.initialize(self.state,self.repo,self.task.read_bytes())
         self.cfg=locate.settings(self.repo/'.codex/es/agy.toml')
     def tearDown(self):self.tmp.cleanup()
-    def invoke(self,case='ok',extra=None,out='run'):
+    def invoke(self,case='ok',extra=None,out='run',json_output=True):
         env=os.environ.copy();env['FAKE_CASE']=case;env['FAKE_ORIGINAL_FILE']=str(self.repo/'src/example.py')
         cmd=[sys.executable,str(self.repo/'.codex/es/locate.py'),'--repo',str(self.repo),
              '--task-file',str(self.task),'--state-dir',str(self.state),'--out-dir',str(self.base/out),'--agy',str(FAKE)]
+        if json_output: cmd.append('--json')
         return subprocess.run(cmd+(extra or []),capture_output=True,text=True,env=env,timeout=20)
     def metrics(self,out='run'):return json.loads((self.base/out/'metrics.json').read_text())
     def export(self,**kw):
@@ -176,6 +177,20 @@ class SnapshotTests(Fixture):
 
 @unittest.skipUnless(os.name=='posix','POSIX subprocess adapter')
 class AgyRunnerTests(Fixture):
+    def test_default_text_and_saved_machine_report(self):
+        r=self.invoke(json_output=False)
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        self.assertIn('AGY: validated',r.stdout)
+        self.assertIn('1: def f():',r.stdout)
+        self.assertEqual(r.stdout,(self.base/'run/report.txt').read_text())
+        report=json.loads((self.base/'run/report.json').read_text())
+        self.assertEqual(report['usage']['total_tokens'],130)
+        self.assertEqual(report['evidence']['primary'][0]['source'],'1: def f():\n2:     return 1')
+    def test_default_failure_report(self):
+        r=self.invoke('auth',json_output=False)
+        self.assertNotEqual(r.returncode,0)
+        self.assertIn('authentication required',r.stdout)
+        self.assertIn('AGY: agy_failed',r.stdout)
     def test_response_contains_usage_and_export_scope(self):
         r=self.invoke();self.assertEqual(r.returncode,0,r.stdout+r.stderr)
         result=json.loads(r.stdout)
@@ -235,6 +250,13 @@ class AgyRunnerTests(Fixture):
     def test_partial_is_accepted_not_retried(self):
         r=self.invoke('partial');self.assertEqual(r.returncode,0,r.stdout)
         self.assertEqual(json.loads(r.stdout)['handoff_status'],'partial');self.assertEqual(budget.status(self.state)['attempts'],1)
+    def test_ready_with_missing_context_keeps_verified_evidence(self):
+        r=self.invoke('ready_with_gap');self.assertEqual(r.returncode,0,r.stdout)
+        report=json.loads(r.stdout)
+        self.assertEqual(report['handoff_status'],'partial')
+        self.assertIn('return 1',report['evidence']['primary'][0]['source'])
+        self.assertEqual(report['evidence']['unresolved'],['Caller not located.'])
+        self.assertEqual(budget.status(self.state)['attempts'],1)
     def test_not_found_is_scoped(self):
         r=self.invoke('not_found');self.assertEqual(r.returncode,0,r.stdout)
         self.assertFalse(json.loads((self.base/'run/source-manifest.json').read_text())['scope_is_repository_complete'])
