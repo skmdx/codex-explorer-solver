@@ -121,7 +121,8 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         request = 'QUESTION:\n' + task
         scope = dict(mode=args.mode, paths=args.path, scopes=args.scope,
                     file_count=manifest['file_count'], source_bytes=manifest['total_bytes'],
-                    skipped_count=len(manifest['skipped']), include_untracked=args.include_untracked,
+                    skipped_count=len(manifest['skipped']), unmatched_scopes=manifest['unmatched_scopes'],
+                    include_untracked=manifest['includes_untracked'],
                     repository_complete=False)
         request += '\n\nEXPORT SCOPE: ' + compact_json(scope)
         if args.navigation_file:

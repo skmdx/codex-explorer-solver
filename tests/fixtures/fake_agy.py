@@ -11,7 +11,8 @@ if args == ['models']:
     if os.getenv('FAKE_NO_HIGH') != '1': print('gemini-3.8-flash-high Gemini 3.8 Flash (High)')
     sys.exit(0)
 model=args[args.index('--model')+1];agent=args[args.index('--agent')+1]
-assert '--dangerously-skip-permissions' not in args
+assert '--dangerously-skip-permissions' in args
+assert args[args.index('--mode')+1]=='plan'
 assert '--continue' not in args and '--conversation' not in args and '-p' not in args
 assert args[args.index('--input-format')+1]=='stream-json'
 lines=sys.stdin.buffer.readlines();assert len(lines)==1

@@ -19,12 +19,10 @@ def safe_relative(name: str) -> str:
     return str(p)
 
 
-def git_paths(root: Path, scopes: list[str], include_untracked: bool = False) -> list[str]:
+def git_paths(root: Path, include_untracked: bool = False) -> list[str]:
     command = ['git', '-C', str(root), 'ls-files', '-z', '--cached']
     if include_untracked:
         command += ['--others', '--exclude-standard']
-    if scopes and '.' not in scopes:
-        command += ['--', *(f':(top,glob){scope}' for scope in scopes)]
     env = os.environ.copy(); env['GIT_OPTIONAL_LOCKS'] = '0'
     result = subprocess.run(command, capture_output=True, env=env)
     if result.returncode:
@@ -39,12 +37,27 @@ def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
            scopes: list[str], include_untracked: bool, encodings: dict[str, str]) -> dict:
     """Export current worktree bytes, NOT committed Git blobs. No silent cap truncation."""
     scopes = [safe_relative(scope) for scope in scopes]
+    unmatched_scopes = []
     if mode == 'reader':
         if not paths:
             raise EvidenceError('reader requires explicit --path(s)')
         candidates = list(dict.fromkeys(paths))
+    elif scopes and '.' not in scopes:
+        include_untracked = True
+        selected = set()
+        for scope in scopes:
+            matches = [root/scope] if (root/scope).exists() else root.glob(scope)
+            files = set()
+            for match in matches:
+                for path in match.rglob('*') if match.is_dir() else [match]:
+                    if path.is_file():
+                        files.add(path.relative_to(root).as_posix())
+            if not files:
+                unmatched_scopes.append(scope)
+            selected.update(files)
+        candidates = sorted(selected)
     else:
-        candidates = git_paths(root, scopes, include_untracked)
+        candidates = git_paths(root, include_untracked)
     entries = []; skipped = []; total = 0
     # The private output directory is created by the runner; workspace is new.
     workspace.mkdir(mode=0o700, exist_ok=False)
@@ -72,6 +85,7 @@ def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
         raise EvidenceError('no eligible source files; use --scope, explicitly include untracked, or use reader --path')
     return dict(version=2, mode=mode, scopes=scopes, includes_untracked=include_untracked,
                 candidate_count=len(candidates), files=entries, skipped=skipped,
+                unmatched_scopes=unmatched_scopes,
                 file_count=len(entries), total_bytes=total,
                 scope_is_repository_complete=False)
 

@@ -46,6 +46,9 @@ query just to fill `navigation`. Errors remain unavailable results, not empty re
 exhaustive export filter. Without a useful symbol seed, pass `navigation: null`.
 Scopes are repository-relative files, directories, or globs: `src/*.c` selects direct
 children; `src/**/*.c` also includes nested files. Multiple patterns are combined.
+Explicit scopes include ignored/untracked files and nested repositories. With
+`scope: []` or `["."]`, Git's tracked list is used; `include_untracked` adds
+non-ignored untracked files. Unmatched patterns are returned as `unmatched_scopes`.
 Use an empty `known_findings` only for a new investigation.
 
 ## Read only needed originals

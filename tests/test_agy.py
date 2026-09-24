@@ -42,7 +42,9 @@ class TransportTests(unittest.TestCase):
     def test_model_flag_has_no_fallback(self):
         argv=backend.command('agy','gemini-3.8-flash-medium','es-explorer',Path('/schema'),120)
         self.assertEqual(argv[argv.index('--model')+1],'gemini-3.8-flash-medium')
-        for bad in ('--continue','--conversation','--dangerously-skip-permissions','-p','exec'):
+        self.assertIn('--dangerously-skip-permissions',argv)
+        self.assertEqual(argv[argv.index('--mode')+1],'plan')
+        for bad in ('--continue','--conversation','-p','exec'):
             self.assertNotIn(bad,argv)
     def test_missing_usage_unknown(self):
         s=self.state();self.init(s);s.feed(b'{"event":"result","result":{"status":"SUCCESS","num_turns":1}}')
@@ -190,12 +192,25 @@ class SnapshotTests(Fixture):
     def test_scope_glob_no_matches(self):
         with self.assertRaisesRegex(EvidenceError,'no eligible source files'):
             self.export(scopes=['missing/**/*.py'])
-    def test_scope_glob_untracked_respects_gitignore(self):
+    def test_explicit_scope_includes_ignored_and_untracked(self):
         (self.repo/'src/new.py').write_text('new\n')
         (self.repo/'src/ignored.py').write_text('ignored\n')
         (self.repo/'.gitignore').write_text('src/ignored.py\n')
-        m=self.export(scopes=['src/**/*.py'],include_untracked=True)
-        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py','src/new.py'})
+        m=self.export(scopes=['src/**/*.py'])
+        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py','src/new.py','src/ignored.py'})
+    def test_explicit_scope_crosses_ignored_nested_repository(self):
+        nested=self.repo/'.codex'
+        nested.mkdir()
+        subprocess.run(['git','init','-q',str(nested)],check=True)
+        (self.repo/'.gitignore').write_text('.codex/\n')
+        audit=nested/'audit';audit.mkdir()
+        (audit/'check.py').write_text('assert output == expected\n')
+        subprocess.run(['git','-C',str(nested),'add','audit'],check=True)
+        m=self.export(scopes=['src/*.py','.codex/audit/*','missing/*.c'])
+        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py','.codex/audit/check.py'})
+        self.assertEqual(m['unmatched_scopes'],['missing/*.c'])
+        self.assertTrue(m['includes_untracked'])
+        snap.verify_export(self.repo,self.base/'workspace',m)
     def test_invalid_scope_refused(self):
         with self.assertRaises(EvidenceError):self.export(scopes=['../secret'])
     def test_negative_finding_invalidated_by_uncited_file_change(self):

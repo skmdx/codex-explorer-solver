@@ -35,12 +35,14 @@ hookへ渡った結果を対象にするため、その後の外側のコード�
 | globでファイルを選ぶ | `scope: ["src/**/*.c", "tests/test_?.py"]` |
 | 指定ファイルの全文を読ませる（Reader） | `paths: [".git/hooks/pre-commit"]`。`scope: []`, `navigation: null`を指定 |
 | `deep_model`で検索する | `deep: true`。既定値は通常と同じHigh。Readerとは併用しない |
-| 未追跡ファイルも検索対象にする | `include_untracked: true`。Gitのignore対象は含まない |
+| scopeを絞らず未追跡ファイルも検索対象にする | `scope: []`, `include_untracked: true`。Gitのignore対象は含まない |
 
 `scope`はリポジトリ相対で、複数指定は和集合です。`*`・`?`・`[abc]`は`/`をまたがず、
 `**/`は0階層以上に一致します。`src/*.c`は直下、`src/**/*.c`は直下と子ディレクトリのCファイルが対象です。
-Gitのglob照合を使い、ドットで始まる名前も対象です。ファイル・ディレクトリ名の直接指定も使えます。
-`[]`または`["."]`はパスの絞り込みなしです。追跡・未追跡ファイルの選択規則はglobでも変わりません。
+ドットで始まる名前も対象です。ファイル・ディレクトリ名の直接指定も使えます。
+明示したscopeは実ファイルから選び、未追跡・ignore対象・入れ子の別リポジトリも含めます。
+`[]`または`["."]`はGit追跡済み一覧を使い、`include_untracked`でignoreされていない未追跡ファイルを追加します。
+一部のscopeにファイルがなければ、収集を続けて`unmatched_scopes`にその指定を返します。
 Readerは明示したファイルだけを渡し、`include_untracked`とは併用しません。
 モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`model`を使います。
 収集期限は同ファイルの`collection_timeout_seconds`（既定1800秒＝30分）で設定します。
@@ -106,7 +108,7 @@ Geminiに版番号・状態判定・パスの書換えを要求しません。
 引用箇所と未解決の問いの件数に固定上限はありません。同じ範囲が別の判断の根拠になる場合も返せます。
 引用の行数・原文出力・handoffのバイト数に追加上限は設けません。
 
-[agy_snapshot.py](../payload/.codex/es/agy_snapshot.py)は、Git追跡済みファイルの現在の内容をコピーします。
+[agy_snapshot.py](../payload/.codex/es/agy_snapshot.py)は、scopeまたはGit一覧で選んだファイルの現在の内容をコピーします。
 未コミットの変更も含みます。Readerでは指定したファイルを使います。
 ファイル名による一律の除外はありません。Git内部のファイルは追跡済み一覧に含まれないため、
 Git hookの調査ではReaderに `.git/hooks/pre-commit` などの実際のパスを渡します。
@@ -132,6 +134,8 @@ AGY終了後は、コピーした全ファイルについて、コピーと元�
 質問は標準入力で渡し、最終結果の`structured_output`を受け取ります。
 探索用エージェントはファイル読取りと検索を行い、Readerには番号付き原文を渡します。
 エージェント定義は[agy_agents](../payload/.codex/es/agy_agents)にあります。
+専用エージェントを`--mode plan --dangerously-skip-permissions`で実行し、非対話実行中の権限確認を自動承認します。
+scopeはコピー対象の指定であり、読取り権限の境界ではありません。回答の引用はコピー対象と照合します。
 
 モデルとエージェントの識別情報、実際のツール呼出しを検査します。書込み・shell実行・再委譲は受け付けません。
 AGYの全体ツール一覧は、実際に呼び出せるツールの一覧とは別なので、拒否条件に使いません。

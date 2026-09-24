@@ -68,6 +68,19 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         metrics=json.loads((run/'metrics.json').read_text())
         self.assertEqual(metrics['effective_model'],'gemini-custom-model')
 
+    async def test_unmatched_scope_is_returned_with_available_evidence(self):
+        result=await self.run_collection(scope=['src/*.py','missing/*.c'])
+        self.assertEqual(result['status'],'validated',result)
+        self.assertEqual(result['unmatched_scopes'],['missing/*.c'])
+        self.assertIn('return 1',read_evidence(result['run_dir'],[1])['text'])
+        request=(Path(result['run_dir'])/'request.jsonl').read_text()
+        self.assertIn('unmatched_scopes',request)
+
+    async def test_empty_scope_failure_returns_error_without_catalog_crash(self):
+        result=await self.run_collection(scope=['missing/*.c'])
+        self.assertNotEqual(result['status'],'validated')
+        self.assertIn('no eligible source files',result['error'])
+
     async def test_waits_and_returns_index_then_originals(self):
         nav={'root':str(self.base),'queries':[{'tool':'references','error':'unsupported'}]}
         result=await self.run_collection(navigation=nav,known_findings='The source is src/example.py.')

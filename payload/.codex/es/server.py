@@ -29,6 +29,8 @@ def catalog(run: Path) -> dict:
     result['run_dir'] = str(run)
     evidence = report.get('evidence')
     result['locations'] = []
+    if (report.get('scope') or {}).get('unmatched_scopes'):
+        result['unmatched_scopes'] = report['scope']['unmatched_scopes']
     if evidence:
         for category in ('primary', 'related'):
             for item in evidence[category]:
@@ -61,6 +63,8 @@ async def collect(
     queries: [{tool, args, result/error}]}.
     scope selects repository-relative files/directories or globs (e.g. src/**/*.c).
     * and ? stay within a path component; ** spans directories. [] selects all.
+    Explicit scopes include ignored/untracked files and nested repositories.
+    [] or ["."] uses Git's tracked files (plus include_untracked if requested).
     These are source export patterns, not a limit on LSP hits.
     scratch_dir is an existing absolute temporary directory outside repo.
     Returns an index without source dumps. Use read_evidence for selected IDs.
@@ -68,7 +72,7 @@ async def collect(
     carries relevant prior observations (empty string for a new investigation).
     paths selects Reader input files, including Git hooks and external files;
     use scope=[], navigation=null and no deep/include_untracked with paths.
-    Otherwise include_untracked includes non-ignored untracked source files.
+    With no scope filter, include_untracked adds non-ignored untracked files.
     model overrides the configured model; deep selects the configured deep model.
     Encodings are detected per file; encodings={path: codec} corrects known mistakes.
     """

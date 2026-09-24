@@ -2,7 +2,7 @@
 """Documented AGY stream-json transport. Python stdlib, Linux/macOS/WSL.
 
 One process receives one user event and EOF. No conversation resume, API client,
-permission bypass, model fallback, automatic retries, or nested model delegation.
+model fallback, automatic retries, or nested model delegation.
 """
 from __future__ import annotations
 import json
@@ -31,6 +31,7 @@ def version(executable: str) -> str:
 def command(executable: str, model: str, agent: str, schema: Path, timeout: float | None) -> list[str]:
     argv = [executable, '--input-format', 'stream-json', '--output-format', 'stream-json',
             '--model', model, '--agent', agent, '--json-schema', str(schema),
+            '--mode', 'plan', '--dangerously-skip-permissions',
             ]
     if timeout is not None:
         argv += ['--print-timeout', f'{math.ceil(timeout)}s']

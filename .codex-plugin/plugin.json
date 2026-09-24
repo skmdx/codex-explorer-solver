@@ -1,6 +1,6 @@
 {
   "name": "codex-explorer-solver",
-  "version": "0.1.0+codex.20260924154530",
+  "version": "0.1.0+codex.20260924160411",
   "description": "Source investigation with Symbols, AGY evidence collection, and exact-source implementation.",
   "author": {
     "name": "skmdx"
