@@ -1,101 +1,114 @@
-# v4 設計: Codex親 + AGY evidence workers
+# 設計とツールの使い方
 
-## 不変条件
+通常の利用方法は[README](../README.ja.md)を参照してください。
+ここでは、調査を手動実行するときや、ツール本体を変更するときに必要な内容を説明します。
 
-親はCodexで編集・検証を担当する。モデルによる探索はAGY経由のGemini 3.8 Flashに限定する。
-Codexのnative child、独立codex exec、AGYの再帰的な子を利用しない。原文が必要な場面を
-安価なモデルの説明で代替しない。既知のファイルとliteral検索だけならモデルを呼ばない。
-既存Hooksは親のツール出力を管理し、AGY内部の全ツールを観測できるとは扱わない。
+## 手動でAGYを呼ぶ
 
-## モジュール境界
+対象のGitリポジトリのルートで実行します。Python 3.11以降、Git、認証済みのAGYが必要です。
+プロセス制御はLinux・macOS・WSLを対象にしています。
 
-- `locate.py`: モード選択、事前確認、export、実行受付、呼出し、検証、最小限の返却。
-- `agy_backend.py`: 一次仕様に沿ったCLIとNDJSON。初期化・tool・最終resultを監視。
-- `agy_snapshot.py`: モデルを使わないexport、原文集合の検証、hash付加。
-- `agy.toml`: キット独自の設定。Googleのglobal settingsではない。
-- `agy_agents/*.md`: 起動時だけexportの`.agents/agents/`へ配置するmain-agent定義。
-- `agy-handoff.schema.json`: モデルが返すhashなしの構造。
-- `handoff.schema.json` / `evidence.py`: hash付き参照の検証と原文取得。`show`で一括実行する。
-- `capture.py`: 完全なログを保存し、正常終了時は短い出力、異常終了時は詳細を返す。
-- `budget.py`: 同じSTATEに対する外部worker受付の直列化と使用量の記録。
-- `hook_*.py`, `configure_hooks.py`: v3から変更なし。登録の再実施は必須ではない。
+```bash
+ES=/home/user/codex-work/.codex/es
+RUN=$(mktemp -d /home/user/codex-work/tmp/explore-solve.XXXXXX)
 
-## 通信契約
+cat > "$RUN/task.txt" <<'TASK'
+ログイン失敗時の通知がどこで生成されるか調べてください。
+通知を生成する関数と呼出し元を、ファイル名・行番号付きで示してください。
+TASK
 
-`agy --input-format stream-json --output-format stream-json --model SLUG --agent NAME
---json-schema SCHEMA_PATH` をshellなしのargvで実行する。期限指定時のみ`--print-timeout`を渡す。
-stdinに `{event:user,message:{content:...}}` を1行送りEOF。`-p`を併用しない。
-resume/continueを使わないため、最終usageは一回のworker内の累積値として扱える。
-プロトコル上はinit→step_update*→result。stepのusageは足さない。
-num_turnsはworker内部の継続回数であり、resumeの有無ではない。正の整数を受け入れる。
+python3 "$ES/locate.py" --repo . \
+  --task-file "$RUN/task.txt" \
+  --state-dir "$RUN/state" \
+  --out-dir "$RUN/explore"
+```
 
-CLI出力を原則として親へ表示しない。events.jsonl、stderr.log、request.jsonlを私有に保存する。
-最終structured_outputはschemaに加えて独立した形状・参照検証を通す。自由文・Markdownから
-推測抽出する経路は持たない。モデルの利用可否はCLIが判定し、initで実際のmodelを確認する。
-未知の通知eventでは処理を中断しない。既知eventの構造と会話IDは検証する。
+`state-dir`はタスクの実行履歴を置く場所です。初回に自動作成され、追加調査でも同じ場所を使います。
+`out-dir`はその1回の結果を置く、新しいディレクトリです。どちらも対象リポジトリの外に置きます。
 
-## Explorer / Readerの境界
+| 調査方法 | 追加する引数 |
+|---|---|
+| ディレクトリを絞って検索する | `--scope src --scope tests` |
+| 指定ファイルの全文を読ませる（Reader） | `--mode reader --path src/login.py`。複数ファイルは`--path`を繰り返す |
+| Highモデルで検索する | `--deep`。Readerとは併用しない |
+| 未追跡ファイルも検索対象にする | `--include-untracked`。Gitのignore対象は含まない |
+| 実行期限を指定する | `--timeout 600`。省略時はAGYの標準期限を使う |
 
-Explorerは `view_file` と `grep_search`、応答用の `finish` を使う。
-管理下のagent定義はそのままCLIに渡し、独自frontmatter検査は行わない。
-AGY 1.2.0のinit.toolsは全体カタログなので受付条件に使わない。
-実際のtool eventを検査する。Readerは原文を番号付きJSONにまとめ、tool listはfinishのみ。
-ask_permissionとmanage_taskは補助ツールとして両方に許容する。
-finishがなければ応答後もCLIが継続を要求する。versionは整数の上下限で1に固定し、
-AGYの関数schema変換が拒否する数値enumを使わない。
+Readerは`--scope`・`--include-untracked`と併用せず、明示したファイルだけを渡します。
+モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`--model`を使います。
 
-`mainAgent:true`, `subagent:false`。`model:inherit`とCLIの具体的なslugを組み合わせる。
-`commandExecutionPolicy:off`, MCP/skills/pluginsは空。model/agentの実際の解決もinitで確認する。
-これはAGYのmain agentであり、Codexの子モデル指定APIを流用した実装ではない。
+## 結果を読む
 
-## 原文snapshot
+成功時の標準出力はJSONです。`evidence`に、引用箇所のファイル名・行番号・ハッシュ・原文・未解決の問いが入ります。
+その原文を読み、必要なら呼出し元や周辺の処理も確認します。別の取得コマンドを挟む必要はありません。
 
-探索を元の作業ディレクトリから切り離すため、現在のworking treeの対象バイト列を
-使い捨てexportへコピーする。Gitオブジェクトのcommit内容ではないので未commit変更が反映される。
-既定はtracked files、untrackedは明示追加。Readerのpathsは完全に明示。
-ルートで有効なagent設定とmetadata/credential-like pathを除外する。
-配布用サブディレクトリにあるagent設定・実装はソースとして扱う。
-ファイル数・合計サイズによる打切りは行わず、個別除外はmanifestに記録する。
+実行先には次のファイルを保存します。
 
-AGYのwireにはhashがなく、ホストがmanifestの実行前hashを付ける。終了時にexportとoriginal双方の
-全対象ファイルを検査し、uncited inputの変更も拒否する。何を根拠にしたかの意味的正確性は
-証明できないため、親は原文を読む。実行中の追加ファイルや変更後に元に戻す操作まで捕捉する
-原子的な全repo snapshotではない。独立copyの共有利用やatomic read-only mountとも区別する。
+| ファイル | 内容 |
+|---|---|
+| `handoff.json` | ハッシュ付きの引用位置と調査結果。原文自体は含まない |
+| `metrics.json` | 成否、使用モデル、使用量、失敗理由 |
+| `source-manifest.json` | コピーしたソースと除外理由 |
+| `events.jsonl`・`stderr.log` | AGYの出力。障害調査が必要なときに読む |
+| `workspace/` | AGYが調べたソースのコピー |
 
-## 実行履歴と使用量
+保存した調査結果から原文を再取得するときと、使用量の履歴を見るときは次を使います。
 
-モデル開始前にSTATEにreserveし、終わればfinishする。同時実行は1件、回数は無制限。
-強い探索も最初から実行でき、繰り返し回数を制限しない。呼出し失敗も履歴に残す。
-終了時usageの欠落はunknownとして記録し、後続の受付を妨げない。
-ツール回数とログ量による探索停止は行わない。期限は指定時だけラッパーが監視する。
-旧STATEに保存された回数・token上限も受付条件として使わない。
+```bash
+python3 "$ES/evidence.py" show --root . --handoff "$RUN/explore/handoff.json"
+python3 "$ES/budget.py" status --state-dir "$RUN/state"
+```
 
-## Hooksとの役割分担
+エラー時は`metrics.json`の`status`と`error`を確認します。実行前の引数・設定エラーは標準エラー出力に返ります。
+ソースが変わっていた場合は、その結果を編集の根拠にせず現在の原文を確認します。
+作業後は必要な結果を回収し、`RUN`以下の一時コピーとログを削除します。
 
-CodexのPostToolUseは親から起動したlocate.pyという外側の操作しか直接扱わない。
-内側のAGY read/searchはAGYイベント監視の担当。Codexのnative spawnカウンタはAGY予算として使わない。
-既存test/search出力のarchive、compaction前後のarchive参照保存・復元はそのまま利用する。
-親にはvalidated handoffと必要な原文だけを入れる。AGYのイベントをPostToolUseで要約するために
-再度モデルへ送るような迂回を作らない。CLI失敗時だけ短いmetricsを読む。
+## ソースの受け渡しと検証
 
-## 安全性の限界
+[agy_snapshot.py](../payload/.codex/es/agy_snapshot.py)は、Git追跡済みファイルの現在の内容をコピーします。
+未コミットの変更も含みます。Readerでは指定したファイルを使います。
+ルートのエージェント設定、Gitの内部情報、認証情報を含みそうなパス、symlink、UTF-8以外、単体10 MiB超のファイルは除外します。
+除外されたファイルは調査対象外です。ファイル数や合計サイズの上限はありません。
 
-custom main-agent tools制限が主な機能制限。init監視は開始後の検知であり、実行前のOS境界ではない。
-元repoをcwdとせずshell/writeを公開しないが、AGYのバグ、global hookや外部拡張、利用者のOS権限まで
-封じるとは主張しない。`--mode=plan`や`--sandbox`をread-only保証として使わず、
-`--dangerously-skip-permissions`は使用しない。Codex親の権限・ネットワーク制約も迂回しない。
+AGY終了後は、コピーした全ファイルについて、コピーと元ソースが実行前の内容に一致するか確認します。
+引用のハッシュはAGYに生成させず、実行前の記録から付けます。
+[evidence.py](../payload/.codex/es/evidence.py)が引用位置と原文を検証し、[locate.py](../payload/.codex/es/locate.py)が原文を含めて返します。
+この照合の対象はコピーしたファイルです。調査範囲外のファイルや、回答の意味的な正しさを保証するものではありません。
 
-## 移行と再現性
+## AGYの実行と待機
 
-旧版のファイルhashが一致するときだけ更新する。native role三件は削除操作としてplan/backupへ記録。
-独自に編集済みなら全更新を拒否し、config/AGENTS/hooksを自動修正しない。
-旧role削除を含めrollback経路を持つが、同時に別プロセスが書き込む状態での実行はサポートしない。
-テスト用fake AGYは別ファイルに明示し、既定runtimeへfallbackとして混ぜない。
-実機での動作と使用量改善は別に測る。
+[agy_backend.py](../payload/.codex/es/agy_backend.py)はAGYのCLIを起動し、JSONを1行ずつ送受信します。
+質問は標準入力で渡し、最終結果の`structured_output`を受け取ります。
+探索用エージェントはファイル読取りと検索を行い、Readerには番号付き原文を渡します。
+エージェント定義は[agy_agents](../payload/.codex/es/agy_agents)にあります。
 
-## 評価
+モデルとエージェントの識別情報、実際のツール呼出しを検査します。書込み・shell実行・再委譲は受け付けません。
+AGYの全体ツール一覧は、実際に呼び出せるツールの一覧とは別なので、拒否条件に使いません。
+この制御はCLIの動作を検査するもので、OSの隔離環境を作るものではありません。
+認証・モデル・応答形式の問題で失敗した場合、自動で再実行したり別モデルへ切り替えたりしません。
 
-同じCodex親を使い、(A)親のみ、(B)旧Codex探索委譲、(C)AGY探索委譲を比較する場合でも、
-成功率、受入条件、親usage、全worker usage、追加I/Oとレイテンシ、provider明細を区別する。
-総token/成功は両providerのtokenizer差もあるので、費用の厳密な代用とはしない。
-fake CLIのusage=130などはparser検証fixtureであり、モデル性能・使用量実測ではない。
+Codex側の待機方法は[SKILL.mdのWait for the result](../payload/.agents/skills/explore-solve/SKILL.md#wait-for-the-result)に定義しています。
+シェルの待機更新を一つのcode-modeセル内で続け、空の進捗をモデルに返しません。
+既定の5分のAGY期限に対してセルは10分待ちます。長い期限を指定した場合は、セル側の待機も延ばします。
+ホストからセルが返された場合は、そのセルを待ち直します。無期限の完了通知ではありません。
+
+## 同時実行と使用量
+
+[budget.py](../payload/.codex/es/budget.py)は、同じ`state-dir`のSQLiteトランザクション内で実行枠を確保します。
+実行中の記録が1件あれば次の起動を拒否し、終了処理で枠を解放します。別の`state-dir`の実行は制限しません。
+強制終了で実行中の記録が残った場合は、実プロセスの終了を確認してから、`budget.py mark-abandoned`で解放します。
+
+呼出し回数とAGY内部のツール回数は無制限です。使用量はAGYの最後の結果を1回だけ記録し、各ステップの値を重ねて加算しません。
+使用量が欠けた場合も終了を記録します。合計は不明のままとし、取得済み分は下限として表示します。
+Codexの使用量は含まれません。AGYのキャッシュ値をCodexと同じ定義として換算しません。
+
+## テスト・ビルドの出力
+
+[capture.py](../payload/.codex/es/capture.py)はコマンドを1回実行して、完全な標準出力・標準エラーと実行情報を保存します。
+正常終了ではログ末尾を短く、異常終了では長めに返します。詳細の確認には保存ログを使います。
+
+```bash
+python3 "$ES/capture.py" --repo . --out-dir "$RUN/tests" -- python3 tests/run_tests.py
+```
+
+終了コードだけでなく、実際に実行した試験と結果を確認します。
