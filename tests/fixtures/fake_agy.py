@@ -50,14 +50,15 @@ if case=='other_changed':
 if case=='original_changed':
     pathlib.Path(os.environ['FAKE_ORIGINAL_FILE']).write_text('externally changed\n')
 ref={'path':'src/example.py','start':1,'end':2,'symbol':'f','evidence':'Implementation of f.'}
+if case=='absolute':ref['path']=str(source_files['src/example.py'])
 if case=='outside':ref['path']='src/not_exported.py'
 if case=='fake_hash':ref['sha256']='0'*64
 if case=='bad_range':ref['end']=999
-wire={'version':3,'status':'ready','primary':[ref],'related':[],'unresolved':[]}
-if case=='partial':wire.update(status='partial',unresolved=['Caller not located.'])
+wire={'references':[ref],'unresolved':[]}
+if case=='partial':wire.update(unresolved=['Caller not located.'])
 if case=='ready_with_gap':wire.update(unresolved=['Caller not located.'])
-if case=='not_found':wire.update(status='not_found',primary=[],unresolved=['No matching symbol in exported files.'])
-if case=='blocked':wire.update(status='blocked',primary=[],unresolved=['Fixture permission denial.'])
+if case=='not_found':wire.update(references=[],unresolved=['No matching symbol in exported files.'])
+if case=='blocked':wire.update(references=[],unresolved=['Fixture permission denial.'])
 # Per-step usage deliberately duplicates the terminal counters: must not be added.
 emit({'event':'step_update','step_update':{'step_type':'agent_response','state':'DONE','step_index':99,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}})
 usage={'input_tokens':100,'output_tokens':30,'thinking_tokens':10,'cache_read_tokens':70,'total_tokens':130}

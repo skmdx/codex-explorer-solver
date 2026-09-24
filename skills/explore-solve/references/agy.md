@@ -5,12 +5,11 @@ question and the needed conditions, updates or callers separately; do not ask it
 to solve an entire issue or find design flaws. Group facts sharing a source path.
 Existing conclusions belong in `known_findings`, not in another broad investigation.
 
-The MCP call waits for completion. The outer code-mode cell must also use the long
-wait shown below. If it still yields, resume the same cell with `yield_time_ms: 3600000`.
-An observation wait expiring does not stop AGY or justify restarting it.
+Call `collect` directly. The plugin excludes its MCP tools from Code Mode;
+there is no outer cell or polling handle for this call.
 The collection deadline is configured in `agy.toml`, not passed by the Solver.
 
-## Known symbol → LSP → AGY, in one cell
+## Pass known symbol locations
 
 Use existing Symbols results where available. Otherwise request only the relations
 needed: `inspect` for definitions, `references` for uses, `call_hierarchy` for calls.
@@ -20,23 +19,29 @@ question directly, finish without AGY. Match the actual tool names exposed by th
 Replace the example paths, position and question. `navigation.root` is the Symbols
 profile's workspacePath; it may be above the repository. Positions are 1-based.
 
-```javascript
-// @exec: {"yield_time_ms": 3600000, "max_output_tokens": 4000}
-const args = {file: "/absolute/repo/src/file.c", line: 120, character: 5};
-const results = await Promise.allSettled([tools.mcp__language_servers__references(args)]);
-const r = results[0];
-const navigation = {root: "/absolute/workspace", queries: [{tool: "references", args,
-  ...(r.status === "fulfilled" ? {result: r.value} : {error: String(r.reason)})}]};
-text(await tools.mcp__explore_solve__collect({
-  repo: "/absolute/repo", scratch_dir: "/absolute/workspace/tmp", scope: ["src"],
-  question: "Which condition prevents adoption of an old completion?",
-  evidence_needed: ["The adoption condition and writes to the version it checks"],
-  navigation, known_findings: "The completion carries a saved version."
-}));
+Example direct `collect` arguments after a Symbols query:
+
+```json
+{
+  "repo": "/absolute/repo",
+  "scratch_dir": "/absolute/workspace/tmp",
+  "scope": ["src"],
+  "question": "Which condition prevents adoption of an old completion?",
+  "evidence_needed": ["The adoption condition and writes to the version it checks"],
+  "navigation": {
+    "root": "/absolute/workspace",
+    "queries": [{
+      "tool": "references",
+      "args": {"file": "/absolute/repo/src/file.c", "line": 120, "character": 5},
+      "result": {"locations": [{"path": "src/file.c", "line": 160}]}
+    }]
+  },
+  "known_findings": "The completion carries a saved version."
+}
 ```
 
-Do not print LSP results before the collection call. They go straight into its
-initial prompt. Errors remain unavailable results, not empty reference lists.
+Pass the relevant locations already returned by Symbols. Do not repeat an LSP
+query just to fill `navigation`. Errors remain unavailable results, not empty reference lists.
 `scope` covers the question's source area; LSP hits are starting points, not an
 exhaustive export filter. Without a useful symbol seed, pass `navigation: null`.
 Scopes are repository-relative files, directories, or globs: `src/*.c` selects direct

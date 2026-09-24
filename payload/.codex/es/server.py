@@ -52,16 +52,13 @@ async def collect(
 ) -> dict:
     """Collect missing source evidence through Gemini High and wait for completion.
 
-    One call includes the entire wait; no polling or background process management.
-    In code mode, start the exec cell with this pragma on its first line:
-    // @exec: {"yield_time_ms": 3600000, "max_output_tokens": 4000}
-    This keeps the outer cell waiting too. If it still yields, resume that same
-    cell with yield_time_ms=3600000 rather than repeated short waits.
+    Call this tool directly. The host exposes this namespace as direct-only,
+    outside code-mode cells. One call waits for completion without a poll handle.
     The collection deadline is set in agy.toml, not selected per tool call.
     question is the next Solver decision, evidence_needed names the code facts
     needed for it (definitions, conditions, updates, callers), not a whole issue.
     Pass known Symbols results directly as navigation={root: LSP workspacePath,
-    queries: [{tool, args, result/error}]}. Do not print/transcribe them first.
+    queries: [{tool, args, result/error}]}.
     scope selects repository-relative files/directories or globs (e.g. src/**/*.c).
     * and ? stay within a path component; ** spans directories. [] selects all.
     These are source export patterns, not a limit on LSP hits.

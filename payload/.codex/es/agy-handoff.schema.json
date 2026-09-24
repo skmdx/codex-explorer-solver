@@ -1,22 +1,7 @@
 {
   "type": "object",
   "properties": {
-    "version": {
-      "type": "integer",
-      "minimum": 3,
-      "maximum": 3
-    },
-    "status": {
-      "type": "string",
-      "enum": [
-        "ready",
-        "partial",
-        "not_found",
-        "blocked"
-      ],
-      "description": "Collection label. The host derives ready/partial from references and unresolved items; without references it reports not_found, or preserves blocked for an environment obstacle. Label inconsistencies do not invalidate source evidence."
-    },
-    "primary": {
+    "references": {
       "type": "array",
       "items": {
         "type": "object",
@@ -40,44 +25,7 @@
           "evidence": {
             "type": "string",
             "minLength": 1,
-            "description": "State the observed code fact that makes this location relevant to the collection request. Do not repeat source text; the host attaches the original lines."
-          }
-        },
-        "required": [
-          "path",
-          "start",
-          "end",
-          "symbol",
-          "evidence"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "related": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 1
-          },
-          "start": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "end": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Inclusive end line, at least start."
-          },
-          "symbol": {
-            "type": "string"
-          },
-          "evidence": {
-            "type": "string",
-            "minLength": 1,
-            "description": "State the observed code fact that makes this location relevant to the collection request. Do not repeat source text; the host attaches the original lines."
+            "description": "What these lines show."
           }
         },
         "required": [
@@ -99,12 +47,8 @@
     }
   },
   "required": [
-    "version",
-    "status",
-    "primary",
-    "related",
+    "references",
     "unresolved"
   ],
-  "additionalProperties": false,
-  "description": "Source evidence report. Cite the smallest ranges needed using the supplied source paths and 1-based inclusive lines. Keep explanations concise; overlapping citations are allowed when they support different findings."
+  "additionalProperties": false
 }

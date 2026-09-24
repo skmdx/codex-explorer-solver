@@ -122,9 +122,9 @@ class SnapshotTests(Fixture):
             self.assertEqual(entry['sha256'], hashlib.sha256(original).hexdigest())
             self.assertEqual((self.base/'workspace'/entry['export_path']).read_text(), expected[entry['path']])
         snap.verify_export(self.repo, self.base/'workspace', manifest)
-        wire = dict(version=3,status='ready',primary=[dict(path=name,start=1,end=1,symbol='',evidence='source') for name in expected],related=[],unresolved=[])
+        wire = dict(references=[dict(path=name,start=1,end=1,symbol='',evidence='source') for name in expected],unresolved=[])
         from evidence import verify_handoff
-        report = verify_handoff(self.repo, snap.bind_handoff(wire, manifest))
+        report = verify_handoff(self.repo, snap.bind_handoff(wire, manifest, self.base/'workspace'))
         self.assertTrue(report['ok'])
     def test_reader_accepts_git_hook_and_external_hook(self):
         hook = self.repo/'.git/hooks/pre-commit'
@@ -210,18 +210,38 @@ class SnapshotTests(Fixture):
 
 @unittest.skipUnless(os.name=='posix','POSIX subprocess adapter')
 class AgyRunnerTests(Fixture):
+    def test_runtime_roots_stop_parent_repository_discovery(self):
+        subprocess.run(['git','init','-q',str(self.base)],check=True)
+        r=self.invoke();self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        for directory in ('workspace','sources'):
+            root=self.base/'run'/directory
+            actual=subprocess.check_output(['git','-C',str(root),'rev-parse','--show-toplevel'],text=True).strip()
+            self.assertEqual(Path(actual),root)
+
+    def test_host_binds_absolute_paths_and_adds_metadata(self):
+        r=self.invoke('absolute');self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        wire=json.loads((self.base/'run/raw-handoff.json').read_text())
+        self.assertEqual(set(wire),{'references','unresolved'})
+        result=json.loads((self.base/'run/handoff.json').read_text())
+        self.assertEqual(result['version'],3)
+        self.assertEqual(result['status'],'ready')
+        self.assertEqual(result['primary'][0]['path'],'src/example.py')
+        self.assertEqual(result['primary'][0]['sha256'],hashlib.sha256((self.repo/'src/example.py').read_bytes()).hexdigest())
+
     def test_navigation_is_in_initial_prompt_without_narrowing_export(self):
         nav={'root':str(self.base),'queries':[
             {'tool':'references','args':{'file':str(self.repo/'src/example.py'),'line':1,'character':5},
-             'result':{'content':[{'type':'text','text':'repo/src/example.py @1:5'}]}},
+             'result':{'content':[{'type':'text','text':'repo/src/example.py @1:5'}],
+                       'location':{'uri':(self.repo/'src/example.py').as_uri()}}},
             {'tool':'call_hierarchy','error':'not supported'}]}
         path=self.base/'navigation.json';path.write_text(json.dumps(nav))
         r=self.invoke(extra=['--navigation-file',str(path)])
         self.assertEqual(r.returncode,0,r.stdout+r.stderr)
         request=json.loads((self.base/'run/request.jsonl').read_text())['message']['content']
-        self.assertIn('repo/src/example.py @1:5',request)
+        self.assertIn(str(self.base/'run/sources/src/example.py')+' @1:5',request)
         self.assertIn('not supported',request)
-        self.assertIn(str(self.repo),request)
+        self.assertNotIn(str(self.repo/'src/example.py'),request)
+        self.assertNotIn((self.repo/'src/example.py').as_uri(),request)
         self.assertEqual(json.loads((self.base/'run/navigation.json').read_text()),nav)
         self.assertEqual(json.loads(r.stdout)['scope']['file_count'],2)
         self.assertNotIn('repo/src/example.py @1:5',r.stdout)
@@ -317,8 +337,10 @@ class AgyRunnerTests(Fixture):
     def test_not_found_is_scoped(self):
         r=self.invoke('not_found');self.assertEqual(r.returncode,0,r.stdout)
         self.assertFalse(json.loads((self.base/'run/source-manifest.json').read_text())['scope_is_repository_complete'])
-    def test_environment_blocked_can_be_valid_handoff(self):
-        r=self.invoke('blocked');self.assertEqual(r.returncode,0,r.stdout);self.assertEqual(json.loads(r.stdout)['handoff_status'],'blocked')
+    def test_environment_obstacle_is_preserved_without_model_status(self):
+        r=self.invoke('blocked');self.assertEqual(r.returncode,0,r.stdout)
+        self.assertEqual(json.loads(r.stdout)['handoff_status'],'not_found')
+        self.assertEqual(json.loads(r.stdout)['evidence']['unresolved'],['Fixture permission denial.'])
     def test_timeout_unknown_and_nonzero(self):
         r=self.invoke('timeout',['--timeout','0.15']);self.assertEqual(r.returncode,124,r.stdout)
         self.assertFalse(self.metrics()['usage_complete']);self.assertEqual(budget.status(self.state)['attempts'],1)

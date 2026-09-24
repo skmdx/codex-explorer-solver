@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import subprocess
 from typing import Any
@@ -97,18 +98,49 @@ def verify_export(root: Path, workspace: Path, manifest: dict) -> None:
                 raise EvidenceError(f'{label}: {entry["path"]}')
 
 
-def bind_handoff(wire: Any, manifest: dict) -> dict:
+def export_navigation(navigation: dict, root: Path, source_root: Path, manifest: dict) -> dict:
+    """Map known original locations to exported files, including MCP text payloads."""
+    workspace = Path(navigation['root'])
+    paths = {}
+    for entry in manifest['files']:
+        original = root / entry['path']
+        target = str(source_root / entry['export_path'])
+        paths[str(original)] = target
+        paths[original.as_uri()] = target
+        if original.is_relative_to(workspace):
+            paths[str(original.relative_to(workspace))] = target
+    pattern = re.compile(r'(?<![\w./-])(?:' + '|'.join(re.escape(p) for p in sorted(paths, key=len, reverse=True))
+                         + r')(?![\w./-])')
+    def rewrite(value):
+        if isinstance(value, str):
+            return pattern.sub(lambda match: paths[match.group()], value)
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, dict):
+            return {key: rewrite(item) for key, item in value.items()}
+        return value
+    return {'root': str(source_root), 'queries': rewrite(navigation['queries'])}
+
+
+def bind_handoff(wire: Any, manifest: dict, source_root: Path) -> dict:
     """Attach host-computed PRE-RUN hashes. A model never invents a digest."""
     if not isinstance(wire, dict): raise EvidenceError('structured_output must be an object')
-    # JSON roundtrip avoids modifying the original saved result and bounds strange types.
-    data = json.loads(compact_json(wire))
+    if set(wire) != {'references', 'unresolved'}:
+        raise EvidenceError('return references and unresolved only')
+    data = dict(version=3, status='ready', primary=json.loads(compact_json(wire['references'])),
+                related=[], unresolved=wire['unresolved'])
     files = {x['path']: x for x in manifest['files']}
+    paths = {str(source_root / x['export_path']): x['path'] for x in manifest['files']}
     for group in ['primary', 'related']:
-        if not isinstance(data.get(group), list): raise EvidenceError('invalid wire reference array')
-        for ref in data[group]:
+        references = data[group]
+        if not isinstance(references, list): raise EvidenceError('invalid wire reference array')
+        for ref in references:
             if not isinstance(ref, dict) or set(ref) != {'path','start','end','symbol','evidence'}:
                 raise EvidenceError('wire reference fields are invalid (do not supply sha256)')
-            if not isinstance(ref.get('path'), str) or ref['path'] not in files:
+            if not isinstance(ref.get('path'), str):
+                raise EvidenceError('reference path must be a string')
+            ref['path'] = paths.get(ref['path'], ref['path'])
+            if ref['path'] not in files:
                 raise EvidenceError('reference outside exported source corpus')
             ref['sha256'] = files[ref['path']]['sha256']
             ref['encoding'] = files[ref['path']]['encoding']

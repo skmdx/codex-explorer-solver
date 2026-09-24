@@ -15,15 +15,13 @@ Ask it for the missing evidence, not the entire user task. Group requests that s
 source and callers; split only when they need different source areas. There is no
 fixed limit on AGY calls or internal tool steps.
 
-For AGY, use the plugin's `collect` MCP tool. It waits for the result inside one call.
-In code mode, start that cell with `// @exec: {"yield_time_ms": 3600000, "max_output_tokens": 4000}`
-on its first line so the outer cell also waits for completion.
-If the host still yields, resume the same cell with `yield_time_ms: 3600000`.
-The collection deadline comes from `agy.toml`; it is separate from the cell's observation wait.
+For AGY, call the plugin's `collect` MCP tool directly. The host exposes this
+namespace outside code-mode cells, so collection returns only on completion,
+failure, or cancellation. The collection deadline comes from `agy.toml`.
 Give the next decision and the missing code facts separately.
 Reuse known findings; reopen settled questions only for a source change, new failure, or counterexample.
 If known Symbols locations can seed the search, pass their results directly to
-`collect.navigation` using [the single-cell example](references/agy.md).
+`collect.navigation` using [the example](references/agy.md).
 Collection returns an index. Select needed IDs with `read_evidence`; repeat those
 IDs without an offset until `complete` is true. Judge from these originals and
 reuse them, reading further only for missing or changed source.

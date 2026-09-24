@@ -33,6 +33,7 @@ AGYを使うには、認証済みの`agy`と`uv`が必要です。プラグイ�
 
 Geminiは関連する定義・呼出し・条件分岐・テストと、その原文を集めます。
 競合シナリオの構成、保証範囲の判断、修正方針、編集・テストはCodexが担当します。
+版番号・収集状態・ハッシュ・引用パスの変換はホストが処理し、Geminiには引用と不足事項だけを返させます。
 同じソースを使う問いはまとめて収集し、別の探索範囲が必要な場合に分けます。
 収集結果は短い説明と引用位置だけです。必要な原文は選択して取得し、大きい場合は続きの位置を返します。
 同じID選択は前回の続きから返し、読み終えた選択は重複表示しません。コンテキスト消失後の再読は`offset: 0`で指定できます。
@@ -40,8 +41,18 @@ Geminiは関連する定義・呼出し・条件分岐・テストと、その�
 文字コードはファイルごとにツールが判定します。ASCII・UTF-8・CP932・EUC-JPが混在していても、Codexが先読みして指定する必要はありません。
 ソースの一致を検証しても、Geminiの説明が正しいとは限らないため、Codexは引用原文を読みます。
 
-AGYの処理中はMCPサーバー内で待ちます。通常の入口には起動後のポーリング操作がありません。
-外側のコード実行セルが待機期限で戻った場合は、その同じセルを待ちます。
+AGYの処理中は直接のMCP呼出し内で待ちます。プラグイン設定でCode Modeからの呼出しを除外し、
+短いセル待機やポーリングをモデルが選択する経路をなくします。
+
+## 待機の制御
+
+`.mcp.json`の`omit_tools_from: ["code_mode"]`で、このMCPをCode Mode内部から除外します。
+Codex 0.156.1で対応しています。ユーザーの`config.toml`への追加設定は不要です。
+
+プラグイン更新後は新しいセッションで使用します。
+`collect`と`read_evidence`は直接のMCPツールとして公開され、Code Mode内の`tools`と`ALL_TOOLS`には入りません。
+したがって`yield_time_ms`の指定は不要です。収集期限は`agy.toml`の既定30分で、呼出し引数からは変更できません。
+他のツールのCode Mode利用には影響しません。
 
 ## 実行回数と結果
 
@@ -83,6 +94,13 @@ codex plugin add codex-explorer-solver@personal
 
 ```bash
 TMPDIR=/home/user/codex-work/tmp uv run --with-requirements requirements.txt python tests/run_tests.py
+```
+
+更新済みプラグインを実際のCodex・AGYで検証する場合は、次を実行します。両サービスの利用量を消費します。
+実AGYの起動を65秒遅らせ、Code Mode内からの呼出し拒否、直接収集の完了待ち、ポーリング0回、原文取得をセッションログで検査します。
+
+```bash
+python3 tests/smoke_direct_collect.py --out-dir /home/user/codex-work/tmp/es-direct-check-run
 ```
 
 MCPの引数、返却ファイル、原文検証と使用量記録の実装は、[設計とツールの使い方](docs/DESIGN.ja.md)を参照してください。
