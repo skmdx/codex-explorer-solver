@@ -1,0 +1,121 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "partial",
+        "not_found",
+        "blocked"
+      ]
+    },
+    "stop_reason": {
+      "type": "string",
+      "enum": [
+        "evidence_ready",
+        "budget",
+        "no_progress",
+        "no_match",
+        "environment"
+      ]
+    },
+    "primary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "symbol": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 220
+          }
+        },
+        "required": [
+          "path",
+          "start",
+          "end",
+          "symbol",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 3
+    },
+    "related": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "symbol": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 220
+          }
+        },
+        "required": [
+          "path",
+          "start",
+          "end",
+          "symbol",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 2
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "maxItems": 3
+    }
+  },
+  "required": [
+    "version",
+    "status",
+    "stop_reason",
+    "primary",
+    "related",
+    "unresolved"
+  ],
+  "additionalProperties": false
+}

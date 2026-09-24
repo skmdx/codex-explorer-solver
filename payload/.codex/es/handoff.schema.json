@@ -1,0 +1,115 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "partial",
+        "not_found",
+        "blocked"
+      ]
+    },
+    "stop_reason": {
+      "type": "string",
+      "enum": [
+        "evidence_ready",
+        "budget",
+        "no_progress",
+        "no_match",
+        "environment"
+      ]
+    },
+    "primary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "end": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "start",
+          "end",
+          "sha256",
+          "symbol",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "related": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "end": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "start",
+          "end",
+          "sha256",
+          "symbol",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "version",
+    "status",
+    "stop_reason",
+    "primary",
+    "related",
+    "unresolved"
+  ],
+  "additionalProperties": false
+}

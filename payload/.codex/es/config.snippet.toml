@@ -1,0 +1,4 @@
+# Optional parent-session setting. Do not overwrite your existing config.
+# All kit delegation is via agy; the parent remains Codex.
+[agents]
+enabled = false

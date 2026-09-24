@@ -1,0 +1,13 @@
+# This is this kit's configuration, NOT an Antigravity native settings file.
+# AGY discovery/CLI capabilities are checked locally before each model run.
+executable = "agy"
+explorer_model = "gemini-3.8-flash-medium"
+reader_model = "gemini-3.8-flash-medium"
+deep_model = "gemini-3.8-flash-high"
+
+# Bounds on the local disposable UTF-8 source export, not model token caps.
+max_snapshot_files = 5000
+max_snapshot_bytes = 67108864
+max_file_bytes = 1048576
+max_reader_bytes = 196608
+max_reader_files = 12

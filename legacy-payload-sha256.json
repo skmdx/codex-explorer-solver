@@ -1,0 +1,10 @@
+{
+  ".codex/es/evidence.py": "a9abf18040ecdb275c10189d3f873823f3f304e64e9ccb5adb9425fab80fc528",
+  ".codex/es/handoff.schema.json": "199e64640b5bfeb3f9fcd48d7ed72ce2aeff7454f530b89113cf6af0d44a10aa",
+  ".codex/es/config.snippet.toml": "c643ab1e7bd12124fb19e7206e559914376954eda973b00e7e7702c5d64f9b97",
+  ".codex/es/locate.py": "d0486e787ed84090bc2ab131e21b2bc7885a21489e6f6400b7b3f31b1a096594",
+  ".codex/agents/repo_explorer.toml": "80ed7daffaa271476a37fdb46e838f2d4b374c5e80518ee4eec24f8f3b009c9f",
+  ".codex/agents/repo_deep_explorer.toml": "21bcc3979912aca051a24cccacc37e2df46cde0599fceef552f5ffb15969ec65",
+  ".agents/skills/explore-solve/SKILL.md": "d52bc39d8159de134b4a0ceb9ee0de19ad92c32659d8683f8cc9f607f4881fdb",
+  ".agents/skills/explore-solve/agents/openai.yaml": "63a36bcc924bc22cbf0d7bdf98055a999ff5249a07177752f22f56c7ccb81c5b"
+}
