@@ -98,7 +98,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
     pre = agy.preflight(executable, model)
     role = 'repo_reader' if args.mode == 'reader' else 'repo_deep_explorer' if args.deep else 'repo_explorer'
     agent = 'es-reader' if args.mode == 'reader' else 'es-deep-explorer' if args.deep else 'es-explorer'
-    tools = [] if args.mode == 'reader' else ['view_file','grep_search']
+    tools = ['finish'] if args.mode == 'reader' else ['view_file','grep_search','finish']
     definition = agy.agent_definition(HERE/'agy_agents'/f'{agent}.md', agent, tools)
     schema = HERE/'agy-handoff.schema.json'
     if not schema.is_file(): raise EvidenceError('agy-handoff.schema.json is missing')
@@ -113,7 +113,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         billing_cost=None, parent_usage_included=False, os_readonly_sandbox=False,
         global_agy_configuration_modified=False, conversation_resumed=False,
         timeout_seconds=args.timeout)
-    code = 1; job = None; stream_state = agy.StreamState(model,agent,tools,16 if args.deep else 10)
+    code = 1; job = None; stream_state = agy.StreamState(model,agent,tools,17 if args.deep else 11)
     try:
         write_private(out/'task.txt', raw_task)
         manifest = snapshot.export(root, out/'workspace', mode=args.mode, paths=args.path,
@@ -148,7 +148,8 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                         observed_tool_calls=len(stream_state.step_ids),
                         effective_model=stream_state.init.get('model') if stream_state.init else None,
                         effective_agent=stream_state.init.get('agent') if stream_state.init else None,
-                        init_tools_checked=stream_state.init is not None,
+                        init_catalog_checked=stream_state.init is not None,
+                        init_is_effective_tool_allowlist=False,
                         conversation_id=stream_state.conversation_id,
                         protocol_error=stream_state.error)
         result = stream_state.result
@@ -157,6 +158,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         if result:
             write_private(out/'result.json',compact_json(result)+'\n')
             metadata['agy_status'] = result.get('status')
+            metadata['provider_turns'] = result.get('num_turns')
         if reason:
             metadata['status'] = reason
             code = 124 if reason == 'local_deadline' else 1

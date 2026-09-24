@@ -33,9 +33,9 @@ class Fixture(unittest.TestCase):
         return snap.export(self.repo,self.base/'workspace',**params)
 
 class TransportTests(unittest.TestCase):
-    def state(self):return backend.StreamState('gemini-3.8-flash-medium','es-explorer',['view_file','grep_search'],10)
+    def state(self):return backend.StreamState('gemini-3.8-flash-medium','es-explorer',['view_file','grep_search','finish'],11)
     def init(self,s,**overrides):
-        data={'model':s.model,'agent':s.agent,'tools':['view_file','grep_search'],'permission_mode':'request-review'};data.update(overrides)
+        data={'model':s.model,'agent':s.agent,'tools':['view_file','grep_search','finish'],'permission_mode':'request-review'};data.update(overrides)
         s.feed(json.dumps({'event':'init','init':data,'conversation_id':'x'}).encode())
     def test_model_flag_has_no_fallback(self):
         argv=backend.command('agy','gemini-3.8-flash-medium','es-explorer',Path('/schema'),120)
@@ -65,7 +65,7 @@ class TransportTests(unittest.TestCase):
     def test_missing_read_tool_rejected(self):
         s=self.state();self.init(s,tools=[]);self.assertTrue(s.error)
     def test_admin_permission_tool_allowed_not_shell(self):
-        s=self.state();self.init(s,tools=['view_file','grep_search','ask_permission']);self.assertIsNone(s.error)
+        s=self.state();self.init(s,tools=['view_file','grep_search','finish','ask_permission']);self.assertIsNone(s.error)
     def test_models_are_exact_not_substrings(self):
         with self.assertRaises(EvidenceError):backend.preflight(str(FAKE),'gemini-3.8-flash')
     def test_known_model_preflight_does_not_run_prompt(self):
@@ -74,10 +74,10 @@ class TransportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p=Path(td)/'a.md'
             template=(KIT/'payload/.codex/es/agy_agents/es-explorer.md').read_text()
-            p.write_text(template.replace('["view_file", "grep_search"]','["view_file", "grep_search", "run_command"]'))
-            with self.assertRaises(EvidenceError):backend.agent_definition(p,'es-explorer',['view_file','grep_search'])
+            p.write_text(template.replace('["view_file", "grep_search", "finish"]','["view_file", "grep_search", "finish", "run_command"]'))
+            with self.assertRaises(EvidenceError):backend.agent_definition(p,'es-explorer',['view_file','grep_search','finish'])
     def test_template_main_only(self):
-        text=backend.agent_definition(KIT/'payload/.codex/es/agy_agents/es-reader.md','es-reader',[])
+        text=backend.agent_definition(KIT/'payload/.codex/es/agy_agents/es-reader.md','es-reader',['finish'])
         self.assertIn('subagent: false',text);self.assertIn('mainAgent: true',text)
     def test_nonflash_configuration_refused(self):
         for bad in ['auto','gpt-6-luna','gemini-3.1-pro-high','gemini-3.8-flash']:
@@ -175,10 +175,18 @@ class AgyRunnerTests(Fixture):
         r=self.invoke('bad_model');self.assertNotEqual(r.returncode,0);self.assertIn('model',self.metrics()['protocol_error'])
     def test_agent_mismatch_rejected(self):
         r=self.invoke('bad_agent');self.assertNotEqual(r.returncode,0);self.assertIn('agent',self.metrics()['protocol_error'])
-    def test_write_tool_exposure_rejected(self):
-        r=self.invoke('write_tool');self.assertNotEqual(r.returncode,0);self.assertIn('tool exposure',self.metrics()['protocol_error'])
-    def test_mcp_tool_exposure_rejected(self):
-        r=self.invoke('mcp_tool');self.assertNotEqual(r.returncode,0)
+    def test_global_write_catalog_is_not_effective_exposure(self):
+        r=self.invoke('write_tool');self.assertEqual(r.returncode,0,r.stderr+r.stdout)
+        self.assertTrue(self.metrics()['init_catalog_checked'])
+        self.assertFalse(self.metrics()['init_is_effective_tool_allowlist'])
+    def test_global_mcp_catalog_is_not_effective_exposure(self):
+        r=self.invoke('mcp_tool');self.assertEqual(r.returncode,0,r.stderr+r.stdout)
+    def test_actual_write_step_rejected(self):
+        r=self.invoke('write_step');self.assertNotEqual(r.returncode,0)
+        self.assertIn('disallowed tool step',self.metrics()['protocol_error'])
+    def test_actual_mcp_step_rejected(self):
+        r=self.invoke('mcp_step');self.assertNotEqual(r.returncode,0)
+        self.assertIn('disallowed tool step',self.metrics()['protocol_error'])
     def test_nested_delegation_rejected(self):
         r=self.invoke('nested');self.assertNotEqual(r.returncode,0);self.assertIn('nested',self.metrics()['protocol_error'])
     def test_observed_tool_cap_stops_run(self):
@@ -191,8 +199,12 @@ class AgyRunnerTests(Fixture):
         r=self.invoke('no_init');self.assertNotEqual(r.returncode,0)
     def test_duplicate_result_not_double_counted(self):
         r=self.invoke('duplicate_result');self.assertNotEqual(r.returncode,0);self.assertFalse(self.metrics()['usage_complete'])
-    def test_no_multi_turn_resume(self):
-        r=self.invoke('two_turns');self.assertNotEqual(r.returncode,0)
+    def test_provider_repair_turns_are_not_conversation_resume(self):
+        r=self.invoke('two_turns');self.assertEqual(r.returncode,0,r.stdout)
+        self.assertEqual(self.metrics()['provider_turns'],2)
+        self.assertEqual(self.metrics()['usage']['total_tokens'],130)
+        self.assertNotIn('--continue',self.metrics()['argv'])
+        self.assertNotIn('--conversation',self.metrics()['argv'])
     def test_invalid_json_not_retried(self):
         r=self.invoke('invalid_json');self.assertNotEqual(r.returncode,0);self.assertEqual(budget.status(self.state)['attempts'],1)
     def test_auth_error_records_failure(self):

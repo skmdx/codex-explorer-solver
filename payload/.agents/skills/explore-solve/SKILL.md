@@ -23,7 +23,8 @@ multi-project workspace root. Create temporary task/state/output directories und
   `python3 "$ES/gateway.py" search --root . --path FILE --literal TEXT`.
   Follow pagination only with the same source snapshot SHA. A scoped no-match is
   not proof of repository-wide absence. Do not spawn a worker for a trivial lookup.
-- Known files but semantic factual question: one AGY reader, `--mode reader`,
+- Known files and a small factual question: read the relevant source directly.
+  Use one AGY reader only when the source volume warrants delegation: `--mode reader`,
   explicit repeated `--path`. The script bundles source; do not paste whole files
   into your context before sending them to the worker.
 - Unknown edit location: one AGY explorer; use narrow `--scope DIR` when justified.
@@ -77,12 +78,23 @@ as parent or report the concrete blocker. Only you edit and approve changes.
 
 ## Preserve test evidence
 
-When output Hooks are enabled, an es_saved_tool_output response means the command
-ALREADY ran. Follow recovery_command and use narrow reads/searches of stored logs;
-do not rerun tests merely to recover saved output. Unknown exit status is not success.
-For large/programmatic/complex commands prefer explicit
+Run tests, builds and other commands expected to emit large output through
 `python3 "$ES/capture.py" --repo . --out-dir PRIVATE_NEW_DIR -- COMMAND ARGS`.
-This retains raw stdout/stderr and exit status, but does not sandbox the command.
+This returns exit status, short exact tails and raw-log paths. Do not print the
+raw logs through code mode. On failure, read the relevant saved error range;
+do not rerun the command to recover its output. Small source reads and bounded
+searches should run directly, without capture overhead.
+
+For commands likely to finish within 30 seconds, call `exec_command` with
+`yield_time_ms=30000`. Give an enclosing `functions.exec` enough time to await
+that call. If it returns a live session, wait on that same session for up to
+30 seconds per call; do not poll every second. Batch independent lookups in one
+tool call when their outputs are needed for the same implementation decision.
+
+Hooks are optional: they do not replace explicit capture in code mode. If an
+es_saved_tool_output response is returned, the command ALREADY ran; use its
+recovery_command. Unknown exit status is not success.
+Capture retains stdout/stderr and exit status, but does not sandbox the command.
 Archived test logs describe a past run, not the correctness of newly edited source.
 Do not re-emit large raw responses through code-mode JavaScript. Do not read AGY
 transcripts through the parent's context. Do not bypass a v2 read guard using

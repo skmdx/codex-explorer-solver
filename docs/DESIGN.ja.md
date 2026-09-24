@@ -26,6 +26,7 @@ Codexのnative child、独立codex exec、AGYの再帰的な子を利用しな�
 stdinに `{event:user,message:{content:...}}` を1行送りEOF。`-p`を併用しない。
 resume/continueを使わないため、最終usageは一回のworker内の累積値として扱える。
 プロトコル上はinit→step_update*→result。stepのusageは足さない。
+num_turnsはworker内部の継続回数であり、resumeの有無ではない。正の整数を受け入れる。
 
 CLI出力を原則として親へ表示しない。events.jsonl、stderr.log、request.jsonlを私有に保存する。
 最終structured_outputはschemaに加えて独立した形状・参照検証を通す。自由文・Markdownから
@@ -34,9 +35,14 @@ initのmodelを検査する。認識外のCLI版で安全に動いたふりを�
 
 ## Explorer / Readerの境界
 
-Explorerは `view_file` と `grep_search` のみ。実行前に定義のfrontmatterを制限された形式で
-検査し、実行時にinit.toolsにも余計な機能がないか確かめる。Readerは原文を番号付きJSONに
-まとめ、tool listは空にする。ask_permissionは補助ツールとして両方に許容する。
+Explorerは `view_file` と `grep_search`、応答用の `finish` を使う。実行前に定義のfrontmatterを
+検査する。AGY 1.2.0のinit.toolsは全体カタログなので必須toolの掲載だけ確認し、実効権限とは
+扱わない。実際のtool eventは許可リストで検査する。Readerは原文を番号付きJSONに
+まとめ、tool listはfinishのみ。ask_permissionは補助ツールとして両方に許容する。
+finishがなければ応答後もCLIが継続を要求する。versionは整数の上下限で1に固定し、
+AGYの関数schema変換が拒否する数値enumを使わない。
+実機の生成要求にはCLIが補助用manage_taskも追加していた。キットの許可リストには
+追加せず、観測された場合は拒否する。生成要求の制限はOS sandboxの保証ではない。
 CLIが別の必須toolを報告する場合、勝手に許可リストを広げず実仕様を確認する。
 
 `mainAgent:true`, `subagent:false`。`model:inherit`とCLIの具体的なslugを組み合わせる。

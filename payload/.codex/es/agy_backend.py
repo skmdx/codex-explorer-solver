@@ -54,7 +54,8 @@ def preflight(executable: str, model: str) -> dict:
 def agent_definition(path: Path, expected_name: str, expected_tools: list[str]) -> str:
     """Validate this kit's deliberately simple JSON-compatible YAML frontmatter.
 
-    Native tool schemas are owned by AGY. The init event is independently checked.
+    Native tool schemas are owned by AGY. Init reports its global catalog, not
+    this agent's effective tool list; actual tool steps are checked separately.
     This parser intentionally rejects custom permission expansion rather than
     pretending that arbitrary frontmatter was safely audited.
     """
@@ -117,8 +118,10 @@ class StreamState:
                 tools = data.get('tools')
                 if not isinstance(tools, list) or any(not isinstance(x, str) for x in tools):
                     raise EvidenceError('init tool set is not reported')
-                if not set(tools) <= self.allowed_tools or not self.required_tools <= set(tools):
-                    raise EvidenceError('unexpected tool exposure in agy init; refusing unrestricted worker')
+                # AGY 1.2.0 advertisedTools() enumerates the CLI catalog, regardless
+                # of the custom agent. It cannot prove capability expansion.
+                if not self.required_tools <= set(tools):
+                    raise EvidenceError('required tools missing from agy catalog')
                 self.permission_mode = data.get('permission_mode')
                 if self.permission_mode == 'always-proceed':
                     raise EvidenceError('always-proceed permissions are not allowed by this worker')
@@ -141,15 +144,18 @@ class StreamState:
             elif kind == 'result':
                 data = event.get('result')
                 if not isinstance(data, dict): raise EvidenceError('missing terminal result')
-                # Startup/auth/model errors may emit a result without an init.
-                if data.get('status') == 'SUCCESS' and self.init is None:
-                    raise EvidenceError('success before checked init')
-                if data.get('status') == 'SUCCESS' and (type(data.get('num_turns')) is not int or data['num_turns'] != 1):
-                    raise EvidenceError('expected exactly one user turn, not a resumed session')
                 cid = data.get('conversation_id')
                 if cid and self.conversation_id and cid != self.conversation_id:
                     raise EvidenceError('result conversation mismatch')
+                # Retain provider usage even when the answer/turn contract fails.
                 self.result = data
+                # Startup/auth/model errors may emit a result without an init.
+                if data.get('status') == 'SUCCESS' and self.init is None:
+                    raise EvidenceError('success before checked init')
+                # The CLI can add continuation turns to a single stdin request.
+                # Resume is controlled by argv, not inferred from this counter.
+                if data.get('status') == 'SUCCESS' and (type(data.get('num_turns')) is not int or data['num_turns'] < 1):
+                    raise EvidenceError('invalid provider turn count')
             else:
                 self.unknown_events += 1
                 raise EvidenceError('unsupported AGY event; update adapter instead of guessing')

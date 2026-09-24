@@ -196,7 +196,7 @@ class ConfigInstallerTests(unittest.TestCase):
         cfg=tomllib.loads((KIT/'payload/.codex/es/config.snippet.toml').read_text())
         self.assertFalse(cfg['agents']['enabled'])
         for name in ('es-explorer','es-deep-explorer','es-reader'):
-            tools=[] if name=='es-reader' else ['view_file','grep_search']
+            tools=['finish'] if name=='es-reader' else ['view_file','grep_search','finish']
             agy_backend.agent_definition(KIT/'payload/.codex/es/agy_agents'/f'{name}.md',name,tools)
 
     def test_skill_is_explicit_opt_in(self):

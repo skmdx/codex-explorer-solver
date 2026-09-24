@@ -12,8 +12,8 @@
 既定のスキル動作は明示呼出しのみで、自動委譲は有効にしていない。
 
 AGY起動にはソースexportを `--add-dir` で渡す。2026-09-24のAGY 1.2.0では、
-Reader/Explorerの制限定義を検出してもinitが全ツールを通知し、能力チェックで停止する。
-チェックを緩めた代替起動は用意していない。実機の使用量・成立条件は
+init.toolsは実効権限ではなく全体カタログを通知する。定義と実際のtool eventを検査し、
+構造化応答用のfinishを含めたReader/Explorerで実機成功を確認した。実機の使用量・成立条件は
 `/home/user/codex-work/note/codex-explorer-solver/20260924/` の測定記録を参照。
 
 以下は配布ZIPの使用説明と検証時点の記録。
@@ -195,10 +195,10 @@ Geminiにはhashを作らせません。返却時にホストが**実行前に�
 
 ## 7. 権限・プロトコル・失敗時の扱い
 
-- custom main agentはExplorerで `view_file` / `grep_search` だけ、Readerで空のtool list。
+- custom main agentはExplorerで `view_file` / `grep_search` / `finish`、Readerで `finish` のみ。
   `subagent:false`、`commandExecutionPolicy:off`、MCP/skills/pluginsなしの定義です。
-- CLIの `init` にある実効モデル・agent・tool listを確認します。期待外の書込み、shell、
-  MCPなどが公開されていたらローカル停止。全権許可モードも拒否します。
+- CLIの `init` でモデル・agent・必須toolの掲載を確認します。tool listは全体カタログであり、
+  実効権限とは扱いません。観測された書込み、shell、MCPなどの呼出しと全権許可モードを拒否します。
 - AGYのplanモードやterminal sandboxをread-only保証と誤解しません。
   本キットはOS sandboxを構築せず、AGYの全体設定・global hooksも書き換えません。
   custom tools制限はAGYの仕様と実装に依存します。init監視は実行開始前の安全境界では

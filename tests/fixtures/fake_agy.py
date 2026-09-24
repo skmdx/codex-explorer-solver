@@ -18,7 +18,7 @@ lines=sys.stdin.buffer.readlines();assert len(lines)==1
 message=json.loads(lines[0]);assert message['event']=='user'
 text=message['message']['content'];case=os.getenv('FAKE_CASE','ok')
 def emit(value):print(json.dumps(value),flush=True)
-tools=[] if agent=='es-reader' else ['view_file','grep_search']
+tools=['finish'] if agent=='es-reader' else ['view_file','grep_search','finish']
 if case=='write_tool':tools+=['write_to_file']
 if case=='mcp_tool':tools+=['mcp_send_message']
 if case=='bad_model':model='gemini-3.7-flash-medium'
@@ -30,8 +30,10 @@ if case=='timeout':time.sleep(10)
 if case=='invalid_json':print('NOT JSON',flush=True);sys.exit(0)
 if case=='nested':emit({'event':'step_update','step_update':{'subagent_info':{'subagents':[{}]},'step_index':1}})
 if case=='unexpected_tool':emit({'event':'step_update','step_update':{'step_type':'tool','step_index':1,'tool_name':'run_command'}})
+if case in ('write_step','mcp_step'):
+    emit({'event':'step_update','step_update':{'step_type':'tool','step_index':1,'tool_name':'write_to_file' if case=='write_step' else 'mcp_send_message'}})
 if case=='tool_limit':
-    for n in range(11):emit({'event':'step_update','step_update':{'step_type':'tool','step_index':n,'tool_name':'view_file'}})
+    for n in range(12):emit({'event':'step_update','step_update':{'step_type':'tool','step_index':n,'tool_name':'view_file'}})
 if case=='auth':
     emit({'event':'result','result':{'status':'ERROR','error':'authentication required','num_turns':0}});sys.exit(1)
 if case=='fail_usage':

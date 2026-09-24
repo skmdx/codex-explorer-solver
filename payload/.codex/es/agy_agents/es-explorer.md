@@ -1,7 +1,7 @@
 ---
 name: "es-explorer"
 description: "Bounded source evidence worker selected as the agy MAIN agent by the host."
-tools: ["view_file", "grep_search"]
+tools: ["view_file", "grep_search", "finish"]
 mainAgent: true
 subagent: false
 model: "inherit"
@@ -29,7 +29,11 @@ are found, even if this is a single file. Do not fill a quota with extra candida
 Stop after two search/read steps add no relevant information. A missing test alone
 is not reason for repeated exploration. Label analogy as analogy for new features.
 
-Return ONLY the requested schema object, no Markdown fences. Exactly:
+Complete by calling finish with a valid JSON object matching its schema.
+Do not merely print key=value text or JSON as a chat response. Example object:
+{"version":1,"status":"ready","stop_reason":"evidence_ready","primary":[{"path":"src/example.py","start":1,"end":2,"symbol":"example","evidence":"Observed fact."}],"related":[],"unresolved":[]}
+Use actual evidence instead of the example values. All six top-level fields are required.
+Allowed values and bounds:
 version=1; status=ready|partial|not_found|blocked;
 stop_reason=evidence_ready|budget|no_progress|no_match|environment;
 primary (0..3), related (0..2), unresolved (0..3 short strings).
