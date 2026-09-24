@@ -12,6 +12,15 @@
 省略時は続きから、明示した`offset`があればその位置から返します。重なる引用行はまとめます。
 MCP呼出しの取消時はrunnerへSIGINTを送り、AGYの子プロセスを停止して終了を待ちます。
 
+## 切り詰め時の案内
+
+[hooks/hooks.json](../hooks/hooks.json)の`PostToolUse`から[truncation_hint.py](../payload/.codex/es/truncation_hint.py)を呼びます。
+シェルのツール結果にある`…N tokens truncated…`または`…N chars truncated…`を検出し、
+`additionalContext`へ短い英語の案内を返します。大量出力であるだけでは発火しません。
+案内は取得範囲・方法の見直しを促し、広範なソース調査や大量の試験出力ではスキルを選択肢として示します。
+元の出力・終了コードは置換せず、実行も止めません。使用回数や通知履歴は保存しません。
+hookへ渡った結果を対象にするため、その後の外側のコード実行セルで起きる切り詰めは検出対象外です。
+
 ## 収集の指定
 
 `collect`にはリポジトリの絶対パス、次の判断、不足する根拠、既知の結論、LSP結果を渡します。
