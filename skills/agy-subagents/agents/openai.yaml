@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGY Subagents"
+  short_description: "Blocking Gemini or Claude reviews and implementation"
+  default_prompt: "Use $agy-subagents to delegate a bounded task through the direct MCP tool and verify the result."

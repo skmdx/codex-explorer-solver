@@ -1,7 +1,7 @@
 # This is this kit's configuration, NOT an Antigravity native settings file.
 # Model availability is reported by AGY when invoked.
 executable = "agy"
-collection_timeout_seconds = 1800
+timeout_seconds = 1800
 explorer_model = "gemini-3.8-flash-high"
 reader_model = "gemini-3.8-flash-high"
 deep_model = "gemini-3.8-flash-high"

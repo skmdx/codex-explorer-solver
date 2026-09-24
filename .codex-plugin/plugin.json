@@ -1,7 +1,7 @@
 {
   "name": "codex-explorer-solver",
-  "version": "0.1.0+codex.20260924160411",
-  "description": "Source investigation with Symbols, AGY evidence collection, and exact-source implementation.",
+  "version": "0.1.0+codex.20260924233229",
+  "description": "Source evidence collection and blocking Gemini/Claude delegation through AGY.",
   "author": {
     "name": "skmdx"
   },
@@ -9,8 +9,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Explore \u2192 Solve",
-    "shortDescription": "Source exploration and evidence for Codex",
-    "longDescription": "Use direct source lookup or delegate evidence collection to Gemini through AGY. Codex evaluates the evidence, implements changes, and tests them.",
+    "shortDescription": "Source evidence and blocking AGY delegation",
+    "longDescription": "Collect source evidence or delegate independent reviews and authorized edits through blocking AGY MCP calls.",
     "developerName": "skmdx",
     "category": "Productivity",
     "capabilities": [],

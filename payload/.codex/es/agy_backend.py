@@ -28,11 +28,13 @@ def version(executable: str) -> str:
     return result.stdout.strip()
 
 
-def command(executable: str, model: str, agent: str, schema: Path, timeout: float | None) -> list[str]:
+def command(executable: str, model: str, agent: str, schema: Path | None, timeout: float | None) -> list[str]:
     argv = [executable, '--input-format', 'stream-json', '--output-format', 'stream-json',
-            '--model', model, '--agent', agent, '--json-schema', str(schema),
+            '--model', model, '--agent', agent,
             '--mode', 'plan', '--dangerously-skip-permissions',
             ]
+    if schema is not None:
+        argv += ['--json-schema', str(schema)]
     if timeout is not None:
         argv += ['--print-timeout', f'{math.ceil(timeout)}s']
     return argv

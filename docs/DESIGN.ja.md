@@ -45,7 +45,7 @@ hookへ渡った結果を対象にするため、その後の外側のコード�
 一部のscopeにファイルがなければ、収集を続けて`unmatched_scopes`にその指定を返します。
 Readerは明示したファイルだけを渡し、`include_untracked`とは併用しません。
 モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`model`を使います。
-収集期限は同ファイルの`collection_timeout_seconds`（既定1800秒＝30分）で設定します。
+実行期限は同ファイルの`timeout_seconds`（既定1800秒＝30分）で設定し、収集と一般の委譲で共有します。
 MCP引数には公開せず、Solverが呼出しごとに短縮する経路をなくしています。
 プラグインの`.mcp.json`に`omit_tools_from: ["code_mode"]`を指定し、
 このMCPをCode Modeのツール一覧・実行環境から除外するため、
@@ -129,6 +129,14 @@ AGY終了後は、コピーした全ファイルについて、コピーと元�
 この照合の対象はコピーしたファイルです。調査範囲外のファイルや、回答の意味的な正しさを保証するものではありません。
 
 ## AGYの実行と待機
+
+`agy-subagents` MCPは、`models`でモデル一覧を取得し、`run`で独立レビューや実装を委譲します。
+[subagents.py](../payload/.codex/es/subagents.py)がAGYを起動し、終了までMCP呼出し内で待ちます。
+`task`に依頼、`scratch_dir`に一時領域を渡します。ファイルを使う場合だけ`repo`を渡し、
+`mode: review`は読取り・検索、`mode: edit`は編集とコマンド実行も提供します。
+通常回答・エラー・使用量を返し、取消や期限超過では実行プロセス群を停止します。
+AGYが終了コード0で部分回答だけを返したタイムアウトも、成功とは扱いません。
+このMCPもCode Modeから除外され、タイムアウト・effort・非同期実行の引数は公開しません。
 
 [agy_backend.py](../payload/.codex/es/agy_backend.py)はAGYのCLIを起動し、JSONを1行ずつ送受信します。
 質問は標準入力で渡し、最終結果の`structured_output`を受け取ります。

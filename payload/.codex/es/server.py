@@ -93,7 +93,7 @@ async def collect(
                     'Do not collect whole functions unless needed for the facts.\n')
     argv = [sys.executable, str(HERE/'locate.py'), '--repo', str(root),
             '--task-file', str(task), '--state-dir', str(work/'state'),
-            '--out-dir', str(run), '--timeout', str(CONFIG['collection_timeout_seconds'])]
+            '--out-dir', str(run), '--timeout', str(CONFIG['timeout_seconds'])]
     for path in scope:
         argv.extend(['--scope',path])
     if paths is not None:

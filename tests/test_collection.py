@@ -136,7 +136,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_deadline_returns_failure_and_finalizes_usage(self):
         os.environ['FAKE_CASE']='timeout'
-        with patch.dict('server.CONFIG',collection_timeout_seconds=0.2):
+        with patch.dict('server.CONFIG',timeout_seconds=0.2):
             result=await self.run_collection()
         self.assertNotEqual(result['status'],'validated')
         self.assertEqual(result['locations'],[])

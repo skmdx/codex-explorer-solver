@@ -24,6 +24,12 @@ $codex-explorer-solver:explore-solve
 AGYを使うには、認証済みの`agy`と`uv`が必要です。プラグインのMCPサーバーは`uv`で依存ライブラリを読み込みます。
 調査対象のソースと質問はGoogleのサービスへ送信されます。
 
+独立レビューや実装の委譲には、同梱の`agy-subagents`スキルを使います。
+`agy-subagents.run`を直接呼び出すと、GeminiまたはClaudeの終了まで待って結果を返します。
+ファイルを使うときだけ`repo`を渡し、純粋な設計レビューでは依頼文だけを渡せます。
+既定は読取り・検索のみで、許可済みの編集には`mode: edit`を指定します。
+両MCPとも待機期限は設定側の30分です。シェル起動やポーリングの手順は不要です。
+
 ## 内部で行うこと
 
 1. Codexが手掛かりを検索し、直接読む範囲と、Geminiに任せる調査を決めます。
@@ -68,6 +74,7 @@ Codex 0.156.1で対応しています。ユーザーの`config.toml`への追加
 | 用途 | 場所 |
 |---|---|
 | Codexが読むスキル | [SKILL.md](skills/explore-solve/SKILL.md) |
+| 独立レビュー・実装の委譲 | [agy-subagents](skills/agy-subagents/SKILL.md) |
 | AGYのモデル設定 | [agy.toml](payload/.codex/es/agy.toml) |
 | プラグイン定義 | [.codex-plugin/plugin.json](.codex-plugin/plugin.json) |
 | 実行ツール | インストールされたプラグイン内の `payload/.codex/es` |
@@ -104,5 +111,9 @@ TMPDIR=/home/user/codex-work/tmp uv run --with-requirements requirements.txt pyt
 ```bash
 python3 tests/smoke_direct_collect.py --out-dir /home/user/codex-work/tmp/es-direct-check-run
 ```
+
+一般の委譲は`python3 tests/smoke_subagents.py --out-dir /home/user/codex-work/tmp/agy-subagents-check`
+で検証します。実際のClaudeレビューとGeminiによる小さな編集を順に実行し、各起動を65秒遅らせて
+直接MCP待機・Code Modeからの呼出し拒否・ポーリング0回・編集結果を確認します。
 
 MCPの引数、返却ファイル、原文検証と使用量記録の実装は、[設計とツールの使い方](docs/DESIGN.ja.md)を参照してください。

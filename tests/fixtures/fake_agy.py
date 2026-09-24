@@ -12,7 +12,7 @@ if args == ['models']:
     sys.exit(0)
 model=args[args.index('--model')+1];agent=args[args.index('--agent')+1]
 assert '--dangerously-skip-permissions' in args
-assert args[args.index('--mode')+1]=='plan'
+assert args[args.index('--mode')+1]==('accept-edits' if agent=='es-editor' else 'plan')
 assert '--continue' not in args and '--conversation' not in args and '-p' not in args
 assert args[args.index('--input-format')+1]=='stream-json'
 lines=sys.stdin.buffer.readlines();assert len(lines)==1
@@ -41,6 +41,18 @@ if case=='auth':
     emit({'event':'result','result':{'status':'ERROR','error':'authentication required','num_turns':0}});sys.exit(1)
 if case=='fail_usage':
     emit({'event':'result','result':{'status':'ERROR','error':'simulated failure','num_turns':1,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}});sys.exit(1)
+if agent in ('es-reviewer','es-editor'):
+    response = 'Reviewed the supplied task.'
+    if agent == 'es-editor':
+        pathlib.Path(os.environ['FAKE_ORIGINAL_FILE']).write_text('edited\n')
+        response = 'Edited the requested file.'
+    if case == 'missing_response': response = ''
+    if case == 'native_timeout':
+        response = 'Partial review.'
+        print('print timeout after 30m0s with turn in progress',file=sys.stderr)
+    emit({'event':'result','result':{'conversation_id':'fixture-1','status':'SUCCESS',
+          'response':response,'num_turns':1,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}})
+    sys.exit(1 if case == 'nonzero_success' else 0)
 root=pathlib.Path.cwd().parent/'sources'
 manifest=json.loads((root.parent/'source-manifest.json').read_text())
 source_files={entry['path']:root/entry['export_path'] for entry in manifest['files']}
