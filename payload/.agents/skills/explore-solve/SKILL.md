@@ -9,24 +9,31 @@ at the target Git repository root. Keep task/state/output directories under
 
 ## Investigate
 
-Start with local source navigation/search and read the relevant originals. An unknown
-file location alone does not warrant delegation. Batch independent searches/reads;
-run requested tests alongside investigation when their command is already known.
+Reuse current source and findings already in context. For a small question, search
+only for missing locations and read the needed ranges directly. An unknown location
+alone does not warrant delegation.
 
-Delegate substantial independent reading or exploration when it avoids loading that
-source into the parent, or when explicitly requested. Use `locate.py` only, with no
-direct AGY invocation, native Codex workers, or substitute providers.
-Write the question and needed evidence in TASK, then use a fresh RUN directory:
+Use AGY to locate relevant ranges within large unread sources you would otherwise
+load in full; choose this before reading them. Also delegate when explicitly requested.
+Give the worker known findings and the unresolved question, not a repeat of completed
+investigation or the conversation.
+Recheck settled findings when source changes, evidence is missing, or an independent
+review is requested.
 
-`python3 "$ES/locate.py" --repo . --task-file TASK --state-dir STATE --out-dir RUN`
+For this skill's Gemini investigation, use `locate.py` to retain usage tracking and
+source verification:
+`python3 "$ES/locate.py" --repo . --task-file TASK --state-dir STATE --out-dir AGY_RUN`
 
-STATE is created on first use; reuse it for follow-ups. Known files: add
-`--mode reader --path FILE` (repeat paths). Broader exploration: add `--scope DIR`
-when known. Export defaults to current Git-tracked UTF-8 source; add
-`--include-untracked` only when needed. Unexported areas were not inspected.
-Default workers use Gemini 3.8 Flash Medium; `--deep` uses High for unresolved relationships.
-Worker/tool calls are unlimited, with one worker at a time. Unknown usage stays unknown
-and does not block later calls. AGY's native timeout applies unless `--timeout` is set.
+Write the question and required evidence in TASK. STATE is created on first use;
+reuse it for the same task. AGY_RUN must be a new directory for each invocation.
+Reader: `--mode reader --path FILE` (repeat paths) sends the specified files, including
+explicit untracked files; do not combine it with `--deep`, `--scope`, or `--include-untracked`.
+Explorer: use `--scope DIR` when known. It exports current Git-tracked UTF-8 source;
+`--include-untracked` adds non-ignored untracked files. Unexported areas were not inspected.
+Default workers use Gemini 3.8 Flash Medium; `--deep` selects High for exploration without requiring
+a previous worker. AGY calls/tool steps are unlimited, with one worker per STATE at a time.
+Unknown usage stays unknown and permits later calls. AGY's native timeout applies unless
+`--timeout` is set.
 
 ## Wait for the result
 
@@ -52,16 +59,23 @@ wait duration; do not start another shell poll or inspect logs for progress.
 ## Verify and implement
 
 Successful `locate.py` output includes `evidence`: hash-verified, numbered originals
-for all cited ranges, plus unresolved questions. Read these originals and any needed
-callers/contracts; hashes establish identity, not semantic relevance. No separate
-`evidence.py show` call is needed. For a saved handoff use
+for all cited ranges, plus unresolved questions. Use those originals directly;
+retrieve only missing callers/contracts or ranges needed for editing. Hashes establish
+identity, not semantic relevance. Do not fetch the same unchanged source again just
+because a handoff was saved. Re-read when it changed or is no longer available in context.
+For changed source, inspect current contents locally rather than reuse the old handoff hash.
+For missing ranges use `python3 "$ES/evidence.py" read --root . --path FILE --start N --end M --expect-sha256 HASH`.
+If all cited originals are missing from context, retrieve them together with
 `python3 "$ES/evidence.py" show --root . --handoff HANDOFF`.
-Inspect current source locally when evidence is stale. On worker failure, read concise
-metrics rather than entire transcripts or exports; there are no automatic retries.
+If tool output was truncated, recover missing source from the saved result
+instead of rerunning AGY. Resolve remaining questions without repeating completed work.
+On worker failure, use concise metrics to choose a targeted retry or local investigation.
 
 For tests/builds with large output:
-`python3 "$ES/capture.py" --repo . --out-dir RUN -- COMMAND ARGS`
+`python3 "$ES/capture.py" --repo . --out-dir TEST_RUN -- COMMAND ARGS`
+Use a new TEST_RUN, separate from AGY_RUN. Capture stops at 300 seconds or 16 MiB of logs
+by default; raise `--timeout` / `--log-limit-bytes` for longer or noisier commands.
 This returns exit code, exact short tails and full log paths. Check the actual test/build
 result; use saved log ranges for missing details instead of rerunning. Small reads/searches
-run directly. Hooks do not replace capture in code mode. Report parent and AGY usage
-separately; worker-only counters cannot prove total savings.
+run directly. Hooks do not replace capture in code mode. When usage measurement is part
+of the task, report parent and AGY usage separately; do not add measurement to every call.
