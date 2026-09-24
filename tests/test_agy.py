@@ -177,6 +177,30 @@ class SnapshotTests(Fixture):
 
 @unittest.skipUnless(os.name=='posix','POSIX subprocess adapter')
 class AgyRunnerTests(Fixture):
+    def test_navigation_is_in_initial_prompt_without_narrowing_export(self):
+        nav={'root':str(self.base),'queries':[
+            {'tool':'references','args':{'file':str(self.repo/'src/example.py'),'line':1,'character':5},
+             'result':{'content':[{'type':'text','text':'repo/src/example.py @1:5'}]}},
+            {'tool':'call_hierarchy','error':'not supported'}]}
+        path=self.base/'navigation.json';path.write_text(json.dumps(nav))
+        r=self.invoke(extra=['--navigation-file',str(path)])
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        request=json.loads((self.base/'run/request.jsonl').read_text())['message']['content']
+        self.assertIn('repo/src/example.py @1:5',request)
+        self.assertIn('not supported',request)
+        self.assertIn(str(self.repo),request)
+        self.assertEqual(json.loads((self.base/'run/navigation.json').read_text()),nav)
+        self.assertEqual(json.loads(r.stdout)['scope']['file_count'],2)
+        self.assertNotIn('repo/src/example.py @1:5',r.stdout)
+    def test_navigation_rejects_relative_workspace_root(self):
+        path=self.base/'navigation.json';path.write_text('{"root":"repo","queries":[]}')
+        r=self.invoke(extra=['--navigation-file',str(path)])
+        self.assertNotEqual(r.returncode,0)
+        self.assertIn('absolute LSP workspace',r.stdout)
+    def test_reader_does_not_accept_navigation(self):
+        r=self.invoke(extra=['--mode','reader','--path','src/example.py','--navigation-file',str(self.base/'unused')])
+        self.assertNotEqual(r.returncode,0)
+        self.assertIn('for localize',r.stdout)
     def test_default_text_and_saved_machine_report(self):
         r=self.invoke(json_output=False)
         self.assertEqual(r.returncode,0,r.stdout+r.stderr)
@@ -207,7 +231,7 @@ class AgyRunnerTests(Fixture):
     def test_accounting_failure_retains_evidence_and_reports_error(self):
         args=SimpleNamespace(repo=self.repo,task_file=self.task,state_dir=self.state,
              out_dir=self.base/'run',agy=str(FAKE),timeout=None,mode='localize',
-             deep=False,path=[],scope=[],include_untracked=False,config=None,model=None,encoding=[])
+             deep=False,path=[],scope=[],include_untracked=False,config=None,model=None,encoding=[],navigation_file=None)
         with patch.object(budget,'finish',side_effect=sqlite3.OperationalError('database full')):
             result,code=locate.run(args)
         self.assertEqual(code,1)

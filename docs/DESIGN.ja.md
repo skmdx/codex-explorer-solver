@@ -42,6 +42,20 @@ AGYには定義・呼出し・状態更新・条件分岐・テストの位置�
 Readerは`--scope`・`--include-untracked`と併用せず、明示したファイルだけを渡します。
 モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`--model`を使います。
 
+### LSPの探索結果を渡す
+
+localizeでは`--navigation-file FILE`でSymbolsの結果を初期入力へ含められます。
+JSONは`root`（LSPのworkspacePathの絶対パス）と`queries`（問い合わせ条件と結果の配列）を持ちます。
+結果のテキストは解析し直さずそのまま渡します。相対パスは`root`基準で解釈し、
+対象リポジトリ内の位置をソースコピー内の同じ相対位置へ読み替えます。
+範囲外の候補は未調査の手掛かりであり、元リポジトリを直接読む指示にはしません。
+
+Codexは必要な定義・参照・呼出し関係だけを指定します。LSP結果の保存とAGY起動を同じセルで行い、
+結果全文をCodexへ表示して転記する往復を省きます。具体例は[AGY参照手順](../payload/.agents/skills/explore-solve/references/agy.md#optional-lsp-starting-locations)にあります。
+LSPだけで回答できる問いにはAGYを使いません。LSP結果からexport範囲を自動縮小せず、
+Geminiは足りない条件・呼出し・テストを追加探索します。失敗した問い合わせも結果と区別して渡します。
+入力は`RUN/navigation.json`に保存します。その回の探索用で、STATEへの蓄積は行いません。
+
 ## 結果を読む
 
 標準出力は、実行状態・収集状態・対象件数・短い観察事実・番号付き原文です。

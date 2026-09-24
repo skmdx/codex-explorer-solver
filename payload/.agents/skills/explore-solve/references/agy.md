@@ -21,6 +21,44 @@ Flash High. Add only options the investigation needs:
   Reader does not combine with `--scope`, `--include-untracked`, or `--deep`.
 - `--deep` uses the configured `deep_model` (currently also Flash High).
 - `--timeout 900` gives a long investigation 15 minutes; AGY defaults to five minutes.
+- `--navigation-file NAV` adds LSP results to the initial prompt in localize mode.
+  Use the optional collection step below when a known symbol gives useful starting locations.
+
+### Optional LSP starting locations
+
+Reuse existing results. Otherwise choose only the needed Symbols queries: `inspect`
+for definitions, `references` for uses, or `call_hierarchy` for callers/callees.
+Use `outline` or `search` only if the symbol position is unknown. If LSP alone answers
+the question, finish directly without AGY. Related tests may need further search.
+
+Collect and save results in the same code-mode cell as the invocation below, without
+printing the full results. Set NAV to a new absolute file path beside TASK, outside
+RUN (locate.py requires RUN not to exist yet). Set LSP_ROOT to the workspacePath from the matching
+Symbols profile, not necessarily REPO. Positions passed to Symbols are 1-based.
+For example, with absolute FILE and known LINE and CHARACTER:
+
+```javascript
+const queries = [{tool: "references", args: {file: FILE, line: LINE, character: CHARACTER}}];
+const results = await Promise.allSettled(queries.map(q =>
+  tools[`mcp__language_servers__${q.tool}`](q.args)));
+const navigation = {root: LSP_ROOT, queries: queries.map((q, i) => {
+  const r = results[i];
+  return {...q, ...(r.status === "fulfilled"
+    ? {result: r.value} : {error: String(r.reason)})};
+})};
+const body = JSON.stringify(navigation, null, 2);
+await tools.apply_patch("*** Begin Patch\n*** Add File: " + NAV + "\n"
+  + body.split("\n").map(line => "+" + line).join("\n") + "\n*** End Patch");
+```
+
+After a successful save, run COMMAND with `--navigation-file NAV` in this same cell.
+The awaited save throws on failure and stops the cell before COMMAND; do not catch
+that failure and continue with an old file.
+Keep tool errors as errors; they are not empty reference lists. Results are starting
+locations, not an export filter: choose `--scope` for the question, not just the LSP
+hits. Do not recursively collect a whole call graph before delegating.
+
+### Run and wait
 
 Start and wait in the **same** code-mode cell. Replace COMMAND and REPO below with
 the complete shell command and absolute Git root. The long enclosing yield prevents
