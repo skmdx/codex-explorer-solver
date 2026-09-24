@@ -15,7 +15,7 @@ from pathlib import Path
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT / 'payload/.codex/es'))
 sys.path.insert(0, str(KIT))
-from evidence import (EvidenceError, MAX_HANDOFF_BYTES, load_handoff, read_range,
+from evidence import (EvidenceError, load_handoff, read_range,
                       verify_handoff, validate_shape, source_path)
 from install import install
 
@@ -30,7 +30,7 @@ class EvidenceTests(unittest.TestCase):
         self.site = {'path':'src/router.py','start':1,'end':2,
                      'sha256':hashlib.sha256(self.raw).hexdigest(), 'symbol':'route',
                      'evidence':'Calls normalize before returning.'}
-        self.data = {'version':1,'status':'ready','stop_reason':'evidence_ready',
+        self.data = {'version':2,'status':'ready',
                      'primary':[self.site], 'related':[], 'unresolved':[]}
 
     def tearDown(self):
@@ -52,7 +52,7 @@ class EvidenceTests(unittest.TestCase):
             input=json.dumps(self.data),text=True,capture_output=True)
 
     def test_show_returns_verified_originals_and_unresolved(self):
-        self.data.update(status='partial',stop_reason='no_progress',unresolved=['Find caller'])
+        self.data.update(status='partial',unresolved=['Find caller'])
         self.data['related']=[dict(self.site,start=4,end=5,symbol='normalize')]
         r=self.show();self.assertEqual(r.returncode,0,r.stderr)
         report=json.loads(r.stdout)
@@ -107,16 +107,17 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(EvidenceError):
             validate_shape(self.data)
 
-    def test_too_long_range(self):
-        self.site['end'] = 161
-        with self.assertRaises(EvidenceError):
-            validate_shape(self.data)
+    def test_long_source_range_is_returned(self):
+        raw=b'line\n'*200
+        (self.root/'src/router.py').write_bytes(raw)
+        self.site.update(end=200,sha256=hashlib.sha256(raw).hexdigest())
+        result=verify_handoff(self.root,self.data,include_source=True)
+        self.assertEqual(len(result['primary'][0]['source'].splitlines()),200)
 
-    def test_total_line_budget(self):
+    def test_total_lines_do_not_refuse_valid_report(self):
         self.data['primary'] = [dict(self.site, path=f'src/{i}.py', start=1, end=160) for i in range(3)]
         self.data['related'] = [dict(self.site, path='src/four.py', start=1, end=1)]
-        with self.assertRaises(EvidenceError):
-            validate_shape(self.data)
+        validate_shape(self.data)
 
     def test_too_many_primaries(self):
         self.data['primary'] = [dict(self.site, path=f'src/{i}.py') for i in range(4)]
@@ -144,15 +145,15 @@ class EvidenceTests(unittest.TestCase):
             validate_shape(self.data)
 
     def test_partial_and_missing_test(self):
-        self.data.update(status='partial', stop_reason='budget', unresolved=['Registration target not traced.'])
+        self.data.update(status='partial',  unresolved=['Registration target not traced.'])
         self.assertTrue(verify_handoff(self.root, self.data)['ok'])
 
     def test_not_found_is_valid_without_fabricated_reference(self):
-        self.data.update(status='not_found',stop_reason='no_match',primary=[],unresolved=['No error string in inspected src directory.'])
+        self.data.update(status='not_found',primary=[],unresolved=['No error string in inspected src directory.'])
         self.assertTrue(verify_handoff(self.root, self.data)['ok'])
 
     def test_blocked_is_explicit(self):
-        self.data.update(status='blocked',stop_reason='environment',primary=[],unresolved=['Source directory is unreadable.'])
+        self.data.update(status='blocked',primary=[],unresolved=['Source directory is unreadable.'])
         self.assertTrue(verify_handoff(self.root, self.data)['ok'])
 
     def test_digest_not_invented_by_validator(self):
@@ -202,12 +203,19 @@ class EvidenceTests(unittest.TestCase):
 
     def test_long_line_never_silently_truncated(self):
         (self.root/'src/long.py').write_text('x'*17000+'\n')
-        with self.assertRaisesRegex(EvidenceError,'narrow'):
-            read_range(self.root,'src/long.py',1,1)
+        self.assertEqual(read_range(self.root,'src/long.py',1,1)['source'],'1: '+'x'*17000)
 
-    def test_oversize_handoff(self):
-        with self.assertRaises(EvidenceError):
-            load_handoff(b' '* (MAX_HANDOFF_BYTES+1))
+    def test_multibyte_report_within_schema_limits(self):
+        refs=[dict(self.site,path=f'src/{n}.py',symbol='関'*160,evidence='漢'*220) for n in range(5)]
+        self.data.update(primary=refs[:3],related=refs[3:])
+        raw=json.dumps(self.data,ensure_ascii=False).encode()
+        self.assertGreater(len(raw),6144)
+        self.assertEqual(load_handoff(raw),self.data)
+
+    def test_old_protocol_is_not_silently_reinterpreted(self):
+        self.data['version']=1
+        with self.assertRaisesRegex(EvidenceError,'version'):
+            validate_shape(self.data)
 
     def test_duplicate_json_key(self):
         with self.assertRaisesRegex(EvidenceError, 'duplicate JSON key'):

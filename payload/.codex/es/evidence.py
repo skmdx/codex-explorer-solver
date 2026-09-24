@@ -14,15 +14,10 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-MAX_HANDOFF_BYTES = 6144
 MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_RANGE_LINES = 160
-MAX_TOTAL_LINES = 480
-MAX_READ_BYTES = 16000
-TOP_KEYS = {"version", "status", "stop_reason", "primary", "related", "unresolved"}
+TOP_KEYS = {"version", "status", "primary", "related", "unresolved"}
 SITE_KEYS = {"path", "start", "end", "sha256", "symbol", "evidence"}
 STATUSES = {"ready", "partial", "not_found", "blocked"}
-STOP_REASONS = {"evidence_ready", "budget", "no_progress", "no_match", "environment"}
 
 
 class EvidenceError(ValueError):
@@ -43,9 +38,6 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def load_handoff(raw: bytes) -> dict[str, Any]:
-    # Both raw and canonical sizes are bounded; whitespace cannot hide large output.
-    if len(raw) > MAX_HANDOFF_BYTES:
-        raise EvidenceError(f"handoff exceeds {MAX_HANDOFF_BYTES} UTF-8 bytes")
     try:
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                           parse_constant=lambda x: (_ for _ in ()).throw(
@@ -67,13 +59,10 @@ def _string(value: Any, name: str, maximum: int, *, empty: bool = False) -> str:
 def validate_shape(data: Any) -> None:
     if not isinstance(data, dict) or set(data) != TOP_KEYS:
         raise EvidenceError(f"handoff fields must be exactly {sorted(TOP_KEYS)}")
-    if type(data["version"]) is not int or data["version"] != 1:
+    if type(data["version"]) is not int or data["version"] != 2:
         raise EvidenceError("unsupported handoff version")
     if not isinstance(data["status"], str) or data["status"] not in STATUSES:
         raise EvidenceError("invalid status")
-    if not isinstance(data["stop_reason"], str) or data["stop_reason"] not in STOP_REASONS:
-        raise EvidenceError("invalid stop_reason")
-    total_lines = 0
     seen: set[tuple[str, int, int]] = set()
     spans: dict[str, list[tuple[int, int, str]]] = {}
     for category, limit in (("primary", 3), ("related", 2)):
@@ -92,8 +81,8 @@ def validate_shape(data: Any) -> None:
             start, end = item["start"], item["end"]
             if type(start) is not int or type(end) is not int:
                 raise EvidenceError("line numbers must be integers, not booleans")
-            if start < 1 or end < start or end - start + 1 > MAX_RANGE_LINES:
-                raise EvidenceError(f"range must be 1-based, inclusive, <= {MAX_RANGE_LINES} lines")
+            if start < 1 or end < start:
+                raise EvidenceError("range must be 1-based and inclusive")
             key = (path, start, end)
             if key in seen:
                 raise EvidenceError("duplicate location")
@@ -104,28 +93,23 @@ def validate_shape(data: Any) -> None:
                 if max(start, old_start) <= min(end, old_end):
                     raise EvidenceError(f"overlapping ranges: {path}; merge them")
             spans[path].append((start, end, digest))
-            total_lines += end - start + 1
-    if total_lines > MAX_TOTAL_LINES:
-        raise EvidenceError(f"handoff ranges exceed {MAX_TOTAL_LINES} total lines")
     unresolved = data["unresolved"]
     if not isinstance(unresolved, list) or len(unresolved) > 3:
         raise EvidenceError("unresolved must be an array with at most 3 entries")
     for value in unresolved:
         _string(value, "unresolved", 200)
     if data["status"] == "ready":
-        if not data["primary"] or data["stop_reason"] != "evidence_ready" or unresolved:
-            raise EvidenceError("ready requires primary evidence, evidence_ready, and no unresolved blocker")
+        if not data["primary"] or unresolved:
+            raise EvidenceError("ready requires primary evidence and no unresolved question")
     elif data["status"] == "partial":
-        if not data["primary"] or not unresolved or data["stop_reason"] not in {"budget", "no_progress"}:
-            raise EvidenceError("partial requires a primary, unresolved issue, and budget/no_progress")
+        if not data["primary"] or not unresolved:
+            raise EvidenceError("partial requires primary evidence and an unresolved question")
     elif data["status"] == "not_found":
-        if data["primary"] or data["related"] or not unresolved or data["stop_reason"] not in {"budget", "no_progress", "no_match"}:
+        if data["primary"] or data["related"] or not unresolved:
             raise EvidenceError("not_found requires empty locations and a missing-anchor explanation")
     elif data["status"] == "blocked":
-        if data["primary"] or data["related"] or not unresolved or data["stop_reason"] != "environment":
+        if data["primary"] or data["related"] or not unresolved:
             raise EvidenceError("blocked requires empty locations and an environment explanation")
-    if len(compact_json(data).encode("utf-8")) > MAX_HANDOFF_BYTES:
-        raise EvidenceError("canonical handoff exceeds byte budget")
 
 
 def source_path(root: Path, relative: str) -> Path:
@@ -189,16 +173,12 @@ def _render_range(relative: str, lines: list[str], digest: str, start: int, end:
                   expected: str | None) -> dict[str, Any]:
     if type(start) is not int or type(end) is not int or not (1 <= start <= end):
         raise EvidenceError("invalid 1-based inclusive range")
-    if end - start + 1 > MAX_RANGE_LINES:
-        raise EvidenceError(f"read at most {MAX_RANGE_LINES} lines per request")
     if expected is not None and digest != expected:
         raise EvidenceError(f"stale_source: {relative}; re-localize the symbol in this file")
     if end > len(lines):
         raise EvidenceError(f"range exceeds {len(lines)} lines in {relative}")
     result = {"path": relative, "start": start, "end": end, "sha256": digest,
               "source": "\n".join(f"{i}: {lines[i-1]}" for i in range(start, end + 1))}
-    if len(compact_json(result).encode("utf-8")) > MAX_READ_BYTES:
-        raise EvidenceError(f"source output exceeds {MAX_READ_BYTES} bytes; narrow the range (not truncated)")
     return result
 
 
@@ -222,7 +202,7 @@ def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = F
         if include_source:
             result[category] = excerpts
     if include_source:
-        result.update(stop_reason=data["stop_reason"], unresolved=data["unresolved"])
+        result.update(unresolved=data["unresolved"])
     return result
 
 
@@ -246,10 +226,10 @@ def main() -> int:
             result = read_range(args.root, args.path, args.start, args.end, args.expect_sha256)
         else:
             if args.handoff == "-":
-                raw = sys.stdin.buffer.read(MAX_HANDOFF_BYTES + 1)
+                raw = sys.stdin.buffer.read()
             else:
                 with Path(args.handoff).open("rb") as stream:
-                    raw = stream.read(MAX_HANDOFF_BYTES + 1)
+                    raw = stream.read()
             result = verify_handoff(args.root, load_handoff(raw), include_source=args.action == "show")
         print(compact_json(result))
         return 0

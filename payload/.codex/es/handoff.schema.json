@@ -3,9 +3,8 @@
   "properties": {
     "version": {
       "type": "integer",
-      "enum": [
-        1
-      ]
+      "minimum": 2,
+      "maximum": 2
     },
     "status": {
       "type": "string",
@@ -14,17 +13,8 @@
         "partial",
         "not_found",
         "blocked"
-      ]
-    },
-    "stop_reason": {
-      "type": "string",
-      "enum": [
-        "evidence_ready",
-        "budget",
-        "no_progress",
-        "no_match",
-        "environment"
-      ]
+      ],
+      "description": "ready: primary evidence and no unresolved questions. partial: primary evidence plus unresolved questions. not_found: empty primary/related and explain the missing evidence in unresolved. blocked: empty primary/related and explain the obstacle in unresolved."
     },
     "primary": {
       "type": "array",
@@ -32,34 +22,45 @@
         "type": "object",
         "properties": {
           "path": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 400,
+            "minLength": 1
           },
           "start": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1
           },
           "end": {
-            "type": "integer"
-          },
-          "sha256": {
-            "type": "string"
+            "type": "integer",
+            "minimum": 1,
+            "description": "Inclusive end line, at least start."
           },
           "symbol": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 160
           },
           "evidence": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 220,
+            "minLength": 1,
+            "description": "Explain why this location answers the question. Do not repeat source text; the host attaches the original lines."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
           }
         },
         "required": [
           "path",
           "start",
           "end",
-          "sha256",
           "symbol",
-          "evidence"
+          "evidence",
+          "sha256"
         ],
         "additionalProperties": false
-      }
+      },
+      "maxItems": 3
     },
     "related": {
       "type": "array",
@@ -67,49 +68,63 @@
         "type": "object",
         "properties": {
           "path": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 400,
+            "minLength": 1
           },
           "start": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1
           },
           "end": {
-            "type": "integer"
-          },
-          "sha256": {
-            "type": "string"
+            "type": "integer",
+            "minimum": 1,
+            "description": "Inclusive end line, at least start."
           },
           "symbol": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 160
           },
           "evidence": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 220,
+            "minLength": 1,
+            "description": "Explain why this location answers the question. Do not repeat source text; the host attaches the original lines."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
           }
         },
         "required": [
           "path",
           "start",
           "end",
-          "sha256",
           "symbol",
-          "evidence"
+          "evidence",
+          "sha256"
         ],
         "additionalProperties": false
-      }
+      },
+      "maxItems": 2
     },
     "unresolved": {
       "type": "array",
       "items": {
-        "type": "string"
-      }
+        "type": "string",
+        "maxLength": 200,
+        "minLength": 1
+      },
+      "maxItems": 3
     }
   },
   "required": [
     "version",
     "status",
-    "stop_reason",
     "primary",
     "related",
     "unresolved"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "description": "Source evidence report. Cite only the smallest complete ranges needed for the question. Ranges must exist in the supplied files, be 1-based and inclusive, and not overlap within a file across primary/related. Use normalized repository-relative POSIX paths. Use plain single-line strings without control characters."
 }

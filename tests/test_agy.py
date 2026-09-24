@@ -1,5 +1,8 @@
 from __future__ import annotations
 import copy, hashlib, json, os, shutil, subprocess, sys, tempfile, tomllib, unittest
+import sqlite3
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 KIT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(KIT));sys.path.insert(0,str(KIT/'payload/.codex/es'))
@@ -133,6 +136,34 @@ class SnapshotTests(Fixture):
 
 @unittest.skipUnless(os.name=='posix','POSIX subprocess adapter')
 class AgyRunnerTests(Fixture):
+    def test_response_contains_usage_and_export_scope(self):
+        r=self.invoke();self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        result=json.loads(r.stdout)
+        self.assertEqual(result['usage']['total_tokens'],130)
+        self.assertEqual(result['scope']['file_count'],2)
+        self.assertFalse(result['scope']['repository_complete'])
+        self.assertIsNone(result['error'])
+        self.assertTrue(self.metrics()['task_usage_recorded'])
+    def test_busy_state_refused_before_source_export(self):
+        budget.reserve(self.state,self.repo,'repo_explorer',self.task.read_bytes())
+        r=self.invoke();self.assertNotEqual(r.returncode,0)
+        self.assertIn('already reserved',json.loads(r.stdout)['error'])
+        self.assertEqual(json.loads(r.stdout)['status'],'admission_failed')
+        self.assertFalse(self.metrics()['task_usage_recorded'])
+        self.assertFalse((self.base/'run/workspace').exists())
+        self.assertFalse((self.base/'run/events.jsonl').exists())
+    def test_accounting_failure_retains_evidence_and_reports_error(self):
+        args=SimpleNamespace(repo=self.repo,task_file=self.task,state_dir=self.state,
+             out_dir=self.base/'run',agy=str(FAKE),timeout=None,mode='localize',
+             deep=False,path=[],scope=[],include_untracked=False,config=None,model=None)
+        with patch.object(budget,'finish',side_effect=sqlite3.OperationalError('database full')):
+            result,code=locate.run(args)
+        self.assertEqual(code,1)
+        self.assertFalse(result['ok']);self.assertEqual(result['status'],'accounting_failed')
+        self.assertEqual(result['error'],'database full')
+        self.assertTrue(result['evidence']['primary'])
+        self.assertTrue(Path(result['handoff_path']).exists())
+        self.assertFalse(self.metrics()['task_usage_recorded'])
     def test_localize_validated_and_no_codex(self):
         r=self.invoke();self.assertEqual(r.returncode,0,r.stderr+r.stdout)
         m=self.metrics();self.assertEqual(m['backend'],'agy');self.assertEqual(m['requested_model'],'gemini-3.8-flash-medium')
@@ -219,9 +250,17 @@ class AgyRunnerTests(Fixture):
         r=self.invoke('invalid_json');self.assertNotEqual(r.returncode,0);self.assertEqual(budget.status(self.state)['attempts'],1)
     def test_auth_error_records_failure(self):
         r=self.invoke('auth');self.assertNotEqual(r.returncode,0);self.assertEqual(self.metrics()['status'],'agy_failed')
+        self.assertEqual(json.loads(r.stdout)['error'],'authentication required')
     def test_failure_usage_still_counts(self):
         r=self.invoke('fail_usage');self.assertNotEqual(r.returncode,0)
         self.assertEqual(budget.status(self.state)['total_worker_tokens'],130)
+    def test_nonzero_exit_with_success_result_reports_process_failure(self):
+        r=self.invoke('nonzero_success');self.assertNotEqual(r.returncode,0)
+        result=json.loads(r.stdout)
+        self.assertEqual(result['status'],'agy_failed')
+        self.assertIn('exited 1',result['error'])
+        self.assertIsNone(result['evidence'])
+        self.assertEqual(result['usage']['total_tokens'],130)
     def test_hallucinated_path_rejected(self):
         r=self.invoke('outside');self.assertNotEqual(r.returncode,0);self.assertIn('outside',self.metrics()['error'])
     def test_model_generated_hash_not_accepted(self):
@@ -254,7 +293,10 @@ class AgyRunnerTests(Fixture):
         self.assertEqual(budget.status(self.state)['total_worker_tokens'],520)
     def test_no_implicit_codex_fallback_when_agy_missing(self):
         r=self.invoke(extra=['--agy','/not-installed/agy']);self.assertNotEqual(r.returncode,0)
-        self.assertEqual(budget.status(self.state)['attempts'],0);self.assertIn('no Codex fallback',r.stderr)
+        self.assertEqual(budget.status(self.state)['attempts'],0)
+        result=json.loads(r.stdout)
+        self.assertEqual(result['status'],'invocation_failed')
+        self.assertIn('no Codex fallback',result['error']);self.assertEqual(r.stderr,'')
     def test_explicit_model_and_large_task_are_passed_to_provider(self):
         self.task.write_text('Find implementation.\n'*1000)
         r=self.invoke(extra=['--model','gemini-custom-model']);self.assertEqual(r.returncode,0,r.stdout+r.stderr)

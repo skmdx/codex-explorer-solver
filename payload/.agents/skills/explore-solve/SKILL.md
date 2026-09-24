@@ -76,8 +76,11 @@ If all cited originals are missing from context, retrieve them together with
 `python3 "$ES/evidence.py" show --root . --handoff HANDOFF`.
 If tool output was truncated, recover missing source from the saved result
 instead of rerunning AGY. Resolve remaining questions without repeating completed work.
-On failure, read the returned error first, then `metrics_path` if supplied, to choose
-a targeted retry or local investigation. Setup failures can return stderr without metrics.
+The response includes `usage`, exported `scope`, and `error`; read `metrics_path` only
+for missing diagnostics. `status` describes harness execution; `handoff_status` describes
+the findings. `accounting_failed` can still carry usable evidence: address the ledger
+error rather than rerun the investigation. Errors outside the worker run return
+`invocation_failed` and `error`; the CLI's argument syntax errors use stderr.
 
 For tests/builds with large output:
 `python3 "$ES/capture.py" --repo . --out-dir TEST_RUN -- COMMAND ARGS`

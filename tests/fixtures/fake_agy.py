@@ -49,10 +49,10 @@ ref={'path':'src/example.py','start':1,'end':2,'symbol':'f','evidence':'Implemen
 if case=='outside':ref['path']='src/not_exported.py'
 if case=='fake_hash':ref['sha256']='0'*64
 if case=='bad_range':ref['end']=999
-wire={'version':1,'status':'ready','stop_reason':'evidence_ready','primary':[ref],'related':[],'unresolved':[]}
-if case=='partial':wire.update(status='partial',stop_reason='budget',unresolved=['Caller not located.'])
-if case=='not_found':wire.update(status='not_found',stop_reason='no_match',primary=[],unresolved=['No matching symbol in exported files.'])
-if case=='blocked':wire.update(status='blocked',stop_reason='environment',primary=[],unresolved=['Fixture permission denial.'])
+wire={'version':2,'status':'ready','primary':[ref],'related':[],'unresolved':[]}
+if case=='partial':wire.update(status='partial',unresolved=['Caller not located.'])
+if case=='not_found':wire.update(status='not_found',primary=[],unresolved=['No matching symbol in exported files.'])
+if case=='blocked':wire.update(status='blocked',primary=[],unresolved=['Fixture permission denial.'])
 # Per-step usage deliberately duplicates the terminal counters: must not be added.
 emit({'event':'step_update','step_update':{'step_type':'agent_response','state':'DONE','step_index':99,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}})
 usage={'input_tokens':100,'output_tokens':30,'thinking_tokens':10,'cache_read_tokens':70,'total_tokens':130}
@@ -63,4 +63,5 @@ result={'conversation_id':'fixture-1','status':'SUCCESS','response':json.dumps(w
 if case=='missing_structured':del result['structured_output']
 if case=='two_turns':result['num_turns']=2
 emit({'event':'result','result':result})
+if case=='nonzero_success':sys.exit(1)
 if case=='duplicate_result':emit({'event':'result','result':result})

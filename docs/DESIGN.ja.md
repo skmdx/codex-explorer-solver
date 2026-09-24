@@ -39,7 +39,8 @@ Readerは`--scope`・`--include-untracked`と併用せず、明示したファ�
 
 ## 結果を読む
 
-成功時の標準出力はJSONです。`evidence`に、引用箇所のファイル名・行番号・ハッシュ・原文・未解決の問いが入ります。
+標準出力のJSONに、実行状態`status`、調査結果の状態`handoff_status`、使用量`usage`、調査範囲`scope`、失敗理由`error`を返します。
+`evidence`には引用箇所のファイル名・行番号・ハッシュ・原文・未解決の問いが入ります。
 その原文を読み、必要なら呼出し元や周辺の処理も確認します。別の取得コマンドを挟む必要はありません。
 
 実行先には次のファイルを保存します。
@@ -59,11 +60,19 @@ python3 "$ES/evidence.py" show --root . --handoff "$RUN/explore/handoff.json"
 python3 "$ES/budget.py" status --state-dir "$RUN/state"
 ```
 
-エラー時は`metrics.json`の`status`と`error`を確認します。実行前の引数・設定エラーは標準エラー出力に返ります。
+エラー時は返却JSONの`error`を確認し、追加情報が必要なら`metrics.json`を読みます。
+起動設定や結果保存など、実行処理の外に出た例外は`invocation_failed`、使用量記録の失敗は`accounting_failed`です。
+CLIの引数構文エラーは標準エラー出力に返ります。
+`accounting_failed`でも検証済みの`evidence`は返るため、調査をやり直さず記録側の問題を解消します。
 ソースが変わっていた場合は、その結果を編集の根拠にせず現在の原文を確認します。
 作業後は必要な結果を回収し、`RUN`以下の一時コピーとログを削除します。
 
 ## ソースの受け渡しと検証
+
+AGYの回答と保存するhandoffは`version: 2`です。状態は`ready`・`partial`・`not_found`・`blocked`、
+不足や障害の説明は`unresolved`にまとめます。各状態で必要な引用と説明は
+[回答スキーマ](../payload/.codex/es/agy-handoff.schema.json)に定義します。
+引用の行数・原文出力・handoffのバイト数に、スキーマ外の追加上限は設けません。
 
 [agy_snapshot.py](../payload/.codex/es/agy_snapshot.py)は、Git追跡済みファイルの現在の内容をコピーします。
 未コミットの変更も含みます。Readerでは指定したファイルを使います。
@@ -94,7 +103,7 @@ Codex側の待機方法は[SKILL.mdのWait for the result](../payload/.agents/sk
 
 ## 同時実行と使用量
 
-[budget.py](../payload/.codex/es/budget.py)は、同じ`state-dir`のSQLiteトランザクション内で実行枠を確保します。
+[budget.py](../payload/.codex/es/budget.py)は、ソースのコピー前に、同じ`state-dir`のSQLiteトランザクション内で実行枠を確保します。
 実行中の記録が1件あれば次の起動を拒否し、終了処理で枠を解放します。別の`state-dir`の実行は制限しません。
 強制終了で実行中の記録が残った場合は、実プロセスの終了を確認してから、`budget.py mark-abandoned`で解放します。
 

@@ -3,8 +3,8 @@
   "properties": {
     "version": {
       "type": "integer",
-      "minimum": 1,
-      "maximum": 1
+      "minimum": 2,
+      "maximum": 2
     },
     "status": {
       "type": "string",
@@ -13,17 +13,8 @@
         "partial",
         "not_found",
         "blocked"
-      ]
-    },
-    "stop_reason": {
-      "type": "string",
-      "enum": [
-        "evidence_ready",
-        "budget",
-        "no_progress",
-        "no_match",
-        "environment"
-      ]
+      ],
+      "description": "ready: primary evidence and no unresolved questions. partial: primary evidence plus unresolved questions. not_found: empty primary/related and explain the missing evidence in unresolved. blocked: empty primary/related and explain the obstacle in unresolved."
     },
     "primary": {
       "type": "array",
@@ -32,7 +23,8 @@
         "properties": {
           "path": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 400,
+            "minLength": 1
           },
           "start": {
             "type": "integer",
@@ -40,7 +32,8 @@
           },
           "end": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "description": "Inclusive end line, at least start."
           },
           "symbol": {
             "type": "string",
@@ -48,7 +41,9 @@
           },
           "evidence": {
             "type": "string",
-            "maxLength": 220
+            "maxLength": 220,
+            "minLength": 1,
+            "description": "Explain why this location answers the question. Do not repeat source text; the host attaches the original lines."
           }
         },
         "required": [
@@ -69,7 +64,8 @@
         "properties": {
           "path": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 400,
+            "minLength": 1
           },
           "start": {
             "type": "integer",
@@ -77,7 +73,8 @@
           },
           "end": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "description": "Inclusive end line, at least start."
           },
           "symbol": {
             "type": "string",
@@ -85,7 +82,9 @@
           },
           "evidence": {
             "type": "string",
-            "maxLength": 220
+            "maxLength": 220,
+            "minLength": 1,
+            "description": "Explain why this location answers the question. Do not repeat source text; the host attaches the original lines."
           }
         },
         "required": [
@@ -103,7 +102,8 @@
       "type": "array",
       "items": {
         "type": "string",
-        "maxLength": 200
+        "maxLength": 200,
+        "minLength": 1
       },
       "maxItems": 3
     }
@@ -111,10 +111,10 @@
   "required": [
     "version",
     "status",
-    "stop_reason",
     "primary",
     "related",
     "unresolved"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "description": "Source evidence report. Cite only the smallest complete ranges needed for the question. Ranges must exist in the supplied files, be 1-based and inclusive, and not overlap within a file across primary/related. Use normalized repository-relative POSIX paths. Use plain single-line strings without control characters."
 }

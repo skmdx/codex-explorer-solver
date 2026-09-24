@@ -1,6 +1,6 @@
 ---
 name: "es-reader"
-description: "Bounded source evidence worker selected as the agy MAIN agent by the host."
+description: "Source evidence worker selected as the agy MAIN agent by the host."
 tools: ["finish"]
 mainAgent: true
 subagent: false

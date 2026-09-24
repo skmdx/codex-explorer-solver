@@ -1,6 +1,6 @@
 ---
 name: "es-deep-explorer"
-description: "Bounded source evidence worker selected as the agy MAIN agent by the host."
+description: "Source evidence worker selected as the agy MAIN agent by the host."
 tools: ["view_file", "grep_search", "finish"]
 mainAgent: true
 subagent: false
