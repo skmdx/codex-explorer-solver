@@ -29,11 +29,11 @@ class Fixture(unittest.TestCase):
         return subprocess.run(cmd+(extra or []),capture_output=True,text=True,env=env,timeout=20)
     def metrics(self,out='run'):return json.loads((self.base/out/'metrics.json').read_text())
     def export(self,**kw):
-        params=dict(mode='localize',paths=[],scopes=[],include_untracked=False,limits=self.cfg);params.update(kw)
+        params=dict(mode='localize',paths=[],scopes=[],include_untracked=False);params.update(kw)
         return snap.export(self.repo,self.base/'workspace',**params)
 
 class TransportTests(unittest.TestCase):
-    def state(self):return backend.StreamState('gemini-3.8-flash-medium','es-explorer',['view_file','grep_search','finish'],11)
+    def state(self):return backend.StreamState('gemini-3.8-flash-medium','es-explorer',['view_file','grep_search','finish'])
     def init(self,s,**overrides):
         data={'model':s.model,'agent':s.agent,'tools':['view_file','grep_search','finish'],'permission_mode':'request-review'};data.update(overrides)
         s.feed(json.dumps({'event':'init','init':data,'conversation_id':'x'}).encode())
@@ -47,8 +47,9 @@ class TransportTests(unittest.TestCase):
         self.assertIsNone(s.usage()['total_tokens']);self.assertFalse(s.usage()['usage_complete'])
     def test_duplicate_json_key_rejected(self):
         s=self.state();s.feed(b'{"event":"init","event":"result"}');self.assertIn('duplicate',s.error)
-    def test_unknown_event_rejected(self):
-        s=self.state();s.feed(b'{"event":"new_protocol"}');self.assertTrue(s.error)
+    def test_unknown_notification_does_not_abort(self):
+        s=self.state();self.init(s);s.feed(b'{"event":"progress"}')
+        self.assertIsNone(s.error);self.assertEqual(s.unknown_events,1)
     def test_tool_started_done_counted_once(self):
         s=self.state();self.init(s)
         for state in ['ACTIVE','DONE']:
@@ -56,32 +57,23 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(len(s.step_ids),1);self.assertIsNone(s.error)
     def test_nan_rejected(self):
         s=self.state();s.feed(b'{"event":"init","extra":NaN}');self.assertTrue(s.error)
-    def test_missing_tool_listing_rejected(self):
-        s=self.state();self.init(s,tools=None);self.assertTrue(s.error)
+    def test_catalog_is_not_an_execution_gate(self):
+        s=self.state();self.init(s,tools=None);self.assertIsNone(s.error)
     def test_boolean_num_turns_rejected(self):
         s=self.state();self.init(s)
         s.feed(b'{"event":"result","result":{"status":"SUCCESS","num_turns":true}}')
         self.assertTrue(s.error)
-    def test_missing_read_tool_rejected(self):
-        s=self.state();self.init(s,tools=[]);self.assertTrue(s.error)
+    def test_native_task_management_is_allowed(self):
+        s=self.state();self.init(s)
+        s.feed(b'{"event":"step_update","step_update":{"step_type":"tool","tool_name":"manage_task","step_index":1}}')
+        self.assertIsNone(s.error)
     def test_admin_permission_tool_allowed_not_shell(self):
         s=self.state();self.init(s,tools=['view_file','grep_search','finish','ask_permission']);self.assertIsNone(s.error)
-    def test_models_are_exact_not_substrings(self):
-        with self.assertRaises(EvidenceError):backend.preflight(str(FAKE),'gemini-3.8-flash')
-    def test_known_model_preflight_does_not_run_prompt(self):
-        p=backend.preflight(str(FAKE),'gemini-3.8-flash-medium');self.assertIn('TEST DOUBLE',p['agy_version'])
-    def test_template_denies_capability_expansion(self):
-        with tempfile.TemporaryDirectory() as td:
-            p=Path(td)/'a.md'
-            template=(KIT/'payload/.codex/es/agy_agents/es-explorer.md').read_text()
-            p.write_text(template.replace('["view_file", "grep_search", "finish"]','["view_file", "grep_search", "finish", "run_command"]'))
-            with self.assertRaises(EvidenceError):backend.agent_definition(p,'es-explorer',['view_file','grep_search','finish'])
-    def test_template_main_only(self):
-        text=backend.agent_definition(KIT/'payload/.codex/es/agy_agents/es-reader.md','es-reader',['finish'])
-        self.assertIn('subagent: false',text);self.assertIn('mainAgent: true',text)
-    def test_nonflash_configuration_refused(self):
-        for bad in ['auto','gpt-6-luna','gemini-3.1-pro-high','gemini-3.8-flash']:
-            with self.subTest(bad=bad),self.assertRaises(EvidenceError):locate.validate_model(bad)
+    def test_version_check_does_not_run_prompt(self):
+        self.assertIn('TEST DOUBLE',backend.version(str(FAKE)))
+    def test_default_uses_native_timeout(self):
+        argv=backend.command('agy','gemini-3.8-flash-medium','es-explorer',Path('/schema'),None)
+        self.assertNotIn('--print-timeout',argv)
 
 class SnapshotTests(Fixture):
     def test_uses_uncommitted_worktree_bytes(self):
@@ -112,12 +104,19 @@ class SnapshotTests(Fixture):
         self.assertEqual(len(self.export()['skipped']),1)
     def test_case_variant_agent_directory_excluded(self):
         self.assertIsNotNone(snap.exclusion('.Agents/agents/untrusted.md'))
-    def test_file_cap_not_silent_truncation(self):
-        self.cfg['max_snapshot_files']=1
-        with self.assertRaisesRegex(EvidenceError,'cap exceeded'):self.export()
-    def test_byte_cap_not_silent_truncation(self):
-        self.cfg['max_snapshot_bytes']=1
-        with self.assertRaisesRegex(EvidenceError,'cap exceeded'):self.export()
+    def test_reader_accepts_more_than_twelve_files_and_old_byte_cap(self):
+        paths=[]
+        for i in range(20):
+            name=f'src/extra{i}.py';(self.repo/name).write_text('# source\n'*1500);paths.append(name)
+        m=self.export(mode='reader',paths=paths)
+        self.assertEqual(m['file_count'],20);self.assertGreater(m['total_bytes'],196608)
+    def test_nested_agent_named_directories_are_source(self):
+        name='payload/.codex/es/budget.py';p=self.repo/name;p.parent.mkdir(parents=True);p.write_text('def reserve(): pass\n')
+        subprocess.run(['git','-C',str(self.repo),'add',name],check=True)
+        m=self.export();self.assertIn(name,[x['path'] for x in m['files']])
+    def test_source_larger_than_old_one_megabyte_cap_is_exported(self):
+        (self.repo/'src/example.py').write_text('#'+('x'*1048576))
+        m=self.export();self.assertIn('src/example.py',[x['path'] for x in m['files']])
     def test_scope_is_literal_not_git_pathspec(self):
         m=self.export(scopes=['src/example.py']);self.assertEqual(m['file_count'],1)
     def test_invalid_scope_refused(self):
@@ -129,8 +128,7 @@ class SnapshotTests(Fixture):
         m=self.export();p=self.base/'workspace/src/example.py';p.chmod(0o600);p.write_text('changed\n')
         with self.assertRaisesRegex(EvidenceError,'snapshot_modified'):snap.verify_export(self.repo,self.base/'workspace',m)
     def test_reader_scope_cannot_silently_skip_inputs(self):
-        self.cfg['max_file_bytes']=1
-        with self.assertRaisesRegex(EvidenceError,'reader input rejected'):self.export(mode='reader',paths=['src/example.py'])
+        with self.assertRaisesRegex(EvidenceError,'reader input rejected'):self.export(mode='reader',paths=['src/missing.py'])
 
 
 @unittest.skipUnless(os.name=='posix','POSIX subprocess adapter')
@@ -177,7 +175,7 @@ class AgyRunnerTests(Fixture):
         r=self.invoke('bad_agent');self.assertNotEqual(r.returncode,0);self.assertIn('agent',self.metrics()['protocol_error'])
     def test_global_write_catalog_is_not_effective_exposure(self):
         r=self.invoke('write_tool');self.assertEqual(r.returncode,0,r.stderr+r.stdout)
-        self.assertTrue(self.metrics()['init_catalog_checked'])
+        self.assertTrue(self.metrics()['init_identity_checked'])
         self.assertFalse(self.metrics()['init_is_effective_tool_allowlist'])
     def test_global_mcp_catalog_is_not_effective_exposure(self):
         r=self.invoke('mcp_tool');self.assertEqual(r.returncode,0,r.stderr+r.stdout)
@@ -189,16 +187,19 @@ class AgyRunnerTests(Fixture):
         self.assertIn('disallowed tool step',self.metrics()['protocol_error'])
     def test_nested_delegation_rejected(self):
         r=self.invoke('nested');self.assertNotEqual(r.returncode,0);self.assertIn('nested',self.metrics()['protocol_error'])
-    def test_observed_tool_cap_stops_run(self):
-        r=self.invoke('tool_limit');self.assertNotEqual(r.returncode,0);self.assertIn('limit',self.metrics()['protocol_error'])
+    def test_many_tool_calls_complete_and_retain_usage(self):
+        r=self.invoke('many_tools');self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        self.assertEqual(self.metrics()['observed_tool_calls'],50)
+        self.assertEqual(self.metrics()['usage']['total_tokens'],130)
     def test_unexpected_shell_step_rejected(self):
         r=self.invoke('unexpected_tool');self.assertNotEqual(r.returncode,0)
-    def test_always_proceed_mode_rejected(self):
-        r=self.invoke('bypass');self.assertNotEqual(r.returncode,0)
+    def test_global_permission_mode_does_not_block_readonly_agent(self):
+        r=self.invoke('bypass');self.assertEqual(r.returncode,0,r.stdout)
     def test_no_init_no_validated_answer(self):
         r=self.invoke('no_init');self.assertNotEqual(r.returncode,0)
     def test_duplicate_result_not_double_counted(self):
-        r=self.invoke('duplicate_result');self.assertNotEqual(r.returncode,0);self.assertFalse(self.metrics()['usage_complete'])
+        r=self.invoke('duplicate_result');self.assertNotEqual(r.returncode,0)
+        self.assertEqual(self.metrics()['usage']['total_tokens'],130)
     def test_provider_repair_turns_are_not_conversation_resume(self):
         r=self.invoke('two_turns');self.assertEqual(r.returncode,0,r.stdout)
         self.assertEqual(self.metrics()['provider_turns'],2)
@@ -244,6 +245,10 @@ class AgyRunnerTests(Fixture):
     def test_no_implicit_codex_fallback_when_agy_missing(self):
         r=self.invoke(extra=['--agy','/not-installed/agy']);self.assertNotEqual(r.returncode,0)
         self.assertEqual(budget.status(self.state)['attempts'],0);self.assertIn('no Codex fallback',r.stderr)
+    def test_explicit_model_and_large_task_are_passed_to_provider(self):
+        self.task.write_text('Find implementation.\n'*1000)
+        r=self.invoke(extra=['--model','gemini-custom-model']);self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        self.assertEqual(self.metrics()['effective_model'],'gemini-custom-model')
     def test_argv_and_source_are_recorded_privately(self):
         self.invoke();self.assertEqual((self.base/'run/request.jsonl').stat().st_mode&0o777,0o600)
         self.assertEqual((self.base/'run').stat().st_mode&0o777,0o700)

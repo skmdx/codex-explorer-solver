@@ -11,7 +11,6 @@ import json
 import math
 import os
 from pathlib import Path
-import re
 import shutil
 import sqlite3
 import subprocess
@@ -21,13 +20,11 @@ import tomllib
 from datetime import datetime, timezone
 from typing import Any
 import agy_backend as agy
-from agy_backend import stop_process_group  # compatibility for capture.py; no model call
 import agy_snapshot as snapshot
 import budget
 from evidence import EvidenceError, compact_json, verify_handoff
 
 HERE = Path(__file__).resolve().parent
-MAX_TASK_BYTES = 16384
 
 
 def write_private(path: Path, data: str | bytes) -> None:
@@ -37,42 +34,24 @@ def write_private(path: Path, data: str | bytes) -> None:
 
 
 def settings(path: Path) -> dict:
-    with path.open('rb') as stream: config = tomllib.load(stream)
-    needed = {'executable','explorer_model','reader_model','deep_model','max_snapshot_files',
-              'max_snapshot_bytes','max_file_bytes','max_reader_bytes','max_reader_files'}
-    if set(config) != needed: raise EvidenceError('agy.toml fields do not match this adapter version')
-    if not isinstance(config['executable'], str) or not config['executable']:
-        raise EvidenceError('agy executable must be a nonempty string')
-    for key in ('explorer_model','reader_model','deep_model'):
-        validate_model(config[key])
-    for key in needed - {'executable','explorer_model','reader_model','deep_model'}:
-        if type(config[key]) is not int or config[key] < 1:
-            raise EvidenceError(f'{key} must be a positive integer')
-    if config['max_file_bytes'] > 10*1024*1024:
-        raise EvidenceError('max_file_bytes exceeds the source validator limit')
-    return config
-
-
-def validate_model(model: Any) -> str:
-    if not isinstance(model, str) or re.fullmatch(r'gemini-3\.8-flash-(low|medium|high)', model) is None:
-        raise EvidenceError('this kit pins Gemini 3.8 Flash by AGY slug; no auto/other-model routing')
-    return model
+    with path.open('rb') as stream:
+        return tomllib.load(stream)
 
 
 def check(args: argparse.Namespace) -> dict:
     config = settings(args.config or HERE/'agy.toml')
     executable = shutil.which(args.agy or config['executable'])
     if executable is None: raise EvidenceError('agy CLI not found; install and authenticate Antigravity CLI')
-    model = validate_model(args.model or config['explorer_model'])
-    data = agy.preflight(executable, model)
-    return dict(ok=True, backend='agy', executable=executable, **data,
+    model = args.model or config['explorer_model']
+    return dict(ok=True, backend='agy', executable=executable, agy_version=agy.version(executable),
+                configured_model=model,
                 model_inference_executed=False,
-                note='CLI/model listing checked; live auth, tool exposure and structured inference require a smoke run.')
+                note='CLI version checked; model availability and authentication are reported by the actual invocation.')
 
 
 def run(args: argparse.Namespace) -> tuple[dict,int]:
     if os.name != 'posix': raise EvidenceError('worker process control requires Linux/macOS/WSL')
-    if not math.isfinite(args.timeout) or args.timeout <= 0:
+    if args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
         raise EvidenceError('timeout must be finite and positive')
     if args.task_file is None or args.out_dir is None or args.state_dir is None:
         raise EvidenceError('--task-file, --out-dir and --state-dir are required for a model run')
@@ -82,9 +61,9 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
     out = args.out_dir.resolve()
     if out == root or root in out.parents: raise EvidenceError('out-dir must be outside the repository')
     if out.exists(): raise EvidenceError('out-dir already exists; choose a new private run directory')
-    with args.task_file.open('rb') as stream: raw_task = stream.read(MAX_TASK_BYTES+1)
-    if len(raw_task) > MAX_TASK_BYTES or not raw_task.strip():
-        raise EvidenceError('task must be nonempty and <=16384 bytes; no parent transcript')
+    raw_task = args.task_file.read_bytes()
+    if not raw_task.strip():
+        raise EvidenceError('task must be nonempty')
     task = raw_task.decode('utf-8')
     if args.mode == 'reader' and (args.deep or not args.path or args.scope or args.include_untracked):
         raise EvidenceError('reader requires explicit --path(s), without --deep/--scope/--include-untracked')
@@ -92,14 +71,13 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         raise EvidenceError('--path is for reader; use --scope to limit localization')
     config = settings(args.config or HERE/'agy.toml')
     key = 'reader_model' if args.mode == 'reader' else 'deep_model' if args.deep else 'explorer_model'
-    model = validate_model(args.model or config[key])
+    model = args.model or config[key]
     executable = shutil.which(args.agy or config['executable'])
     if not executable: raise EvidenceError('agy CLI not found; install/authenticate it; no Codex fallback')
-    pre = agy.preflight(executable, model)
     role = 'repo_reader' if args.mode == 'reader' else 'repo_deep_explorer' if args.deep else 'repo_explorer'
     agent = 'es-reader' if args.mode == 'reader' else 'es-deep-explorer' if args.deep else 'es-explorer'
     tools = ['finish'] if args.mode == 'reader' else ['view_file','grep_search','finish']
-    definition = agy.agent_definition(HERE/'agy_agents'/f'{agent}.md', agent, tools)
+    definition = (HERE/'agy_agents'/f'{agent}.md').read_text(encoding='utf-8')
     schema = HERE/'agy-handoff.schema.json'
     if not schema.is_file(): raise EvidenceError('agy-handoff.schema.json is missing')
     # Validate the existing task ledger before exporting source or launching AGY.
@@ -107,18 +85,18 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
     out.mkdir(mode=0o700, parents=True, exist_ok=False); os.chmod(out,0o700)
     metadata: dict[str,Any] = dict(format_version=4, backend='agy', provider='antigravity_cli',
         created_at=datetime.now(timezone.utc).isoformat(), requested_model=model,
-        role=role, worker_mode=args.mode, agy_version=pre['agy_version'],
+        role=role, worker_mode=args.mode, agy_version=agy.version(executable),
         task_sha256=hashlib.sha256(raw_task).hexdigest(), repo=str(root),
         task_usage_recorded=True, single_worker_enforced=True,
         status='preparing', usage=None, usage_complete=False,
         billing_cost=None, parent_usage_included=False, os_readonly_sandbox=False,
         global_agy_configuration_modified=False, conversation_resumed=False,
         timeout_seconds=args.timeout)
-    code = 1; job = None; stream_state = agy.StreamState(model,agent,tools,17 if args.deep else 11)
+    code = 1; job = None; stream_state = agy.StreamState(model,agent,tools)
     try:
         write_private(out/'task.txt', raw_task)
         manifest = snapshot.export(root, out/'workspace', mode=args.mode, paths=args.path,
-                                   scopes=args.scope, include_untracked=args.include_untracked, limits=config)
+                                   scopes=args.scope, include_untracked=args.include_untracked)
         write_private(out/'source-manifest.json', json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
         dest = out/'workspace/.agents/agents'/f'{agent}.md'
         dest.parent.mkdir(parents=True,exist_ok=True); write_private(dest,definition)
@@ -149,7 +127,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                         observed_tool_calls=len(stream_state.step_ids),
                         effective_model=stream_state.init.get('model') if stream_state.init else None,
                         effective_agent=stream_state.init.get('agent') if stream_state.init else None,
-                        init_catalog_checked=stream_state.init is not None,
+                        init_identity_checked=stream_state.init is not None,
                         init_is_effective_tool_allowlist=False,
                         conversation_id=stream_state.conversation_id,
                         protocol_error=stream_state.error)
@@ -204,12 +182,12 @@ def main() -> int:
     parser.add_argument('--path',action='append',default=[],help='reader input file, repeatable')
     parser.add_argument('--scope',action='append',default=[],help='localize export file/directory, repeatable')
     parser.add_argument('--include-untracked',action='store_true',help='include non-ignored untracked files; review export disclosure')
-    parser.add_argument('--deep',action='store_true',help='one justified additional exploration using 3.8 Flash High')
-    parser.add_argument('--model',help='explicit Gemini 3.8 Flash AGY slug; no automatic fallback')
+    parser.add_argument('--deep',action='store_true',help='use the configured deep exploration model')
+    parser.add_argument('--model',help='explicit AGY model slug; no automatic fallback')
     parser.add_argument('--config',type=Path,help='kit agy.toml path, not AGY global settings')
     parser.add_argument('--agy',help='Antigravity CLI executable path')
-    parser.add_argument('--timeout',type=float,default=120.0,help='local deadline; not a token/cost cap')
-    parser.add_argument('--check',action='store_true',help='check CLI flags/model listing; no model prompt')
+    parser.add_argument('--timeout',type=float,help='optional local deadline in seconds; otherwise use AGY native timeout')
+    parser.add_argument('--check',action='store_true',help='check CLI version; no model prompt')
     args=parser.parse_args()
     try:
         result,code=(check(args),0) if args.check else run(args)

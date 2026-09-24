@@ -9,17 +9,13 @@ import json
 import math
 import os
 from pathlib import Path
-import re
 import signal
 import subprocess
 import time
 from typing import Any
 from evidence import EvidenceError, compact_json, _unique_object
 
-REQUIRED_FLAGS = ('--input-format','--output-format','--json-schema','--model','--agent','--add-dir','--print-timeout')
 USAGE_KEYS = ('input_tokens','output_tokens','thinking_tokens','cache_read_tokens','total_tokens')
-LOG_LIMIT = 16 * 1024 * 1024
-LINE_LIMIT = 4 * 1024 * 1024
 
 
 def strict_json(raw: str | bytes) -> Any:
@@ -27,75 +23,25 @@ def strict_json(raw: str | bytes) -> Any:
                       parse_constant=lambda _: (_ for _ in ()).throw(EvidenceError('non-finite JSON')))
 
 
-def preflight(executable: str, model: str) -> dict:
-    """No prompt is sent. Check installed CLI flags and the exact model listing."""
-    def get(args: list[str]) -> str:
-        result = subprocess.run([executable, *args], stdin=subprocess.DEVNULL,
-                                capture_output=True, text=True, timeout=15)
-        if result.returncode:
-            raise EvidenceError(f'agy {" ".join(args)} failed; authenticate/check installation; no fallback: '
-                                + (result.stderr or result.stdout).strip()[:500])
-        text = result.stdout + result.stderr
-        if len(text) > 1024*1024: raise EvidenceError('unexpectedly large agy preflight response')
-        return text
-    help_text = get(['--help'])
-    missing = [flag for flag in REQUIRED_FLAGS if flag not in help_text]
-    if missing:
-        raise EvidenceError('agy is missing required flags: ' + ', '.join(missing))
-    version = get(['--version']).strip()[:200]
-    listing = get(['models'])
-    # No substring match: 3.8-flash-high is not a match for 3.8-flash-medium.
-    slugs = set(re.findall(r'(?<![A-Za-z0-9_.-])gemini-[A-Za-z0-9_.-]+', listing))
-    if model not in slugs:
-        raise EvidenceError(f'requested model {model} not listed by agy models; no replacement selected')
-    return {'agy_version': version, 'model_available': model, 'required_flags_present': True}
+def version(executable: str) -> str:
+    result = subprocess.run([executable, '--version'], capture_output=True, text=True, check=True)
+    return result.stdout.strip()
 
 
-def agent_definition(path: Path, expected_name: str, expected_tools: list[str]) -> str:
-    """Validate this kit's deliberately simple JSON-compatible YAML frontmatter.
-
-    Native tool schemas are owned by AGY. Init reports its global catalog, not
-    this agent's effective tool list; actual tool steps are checked separately.
-    This parser intentionally rejects custom permission expansion rather than
-    pretending that arbitrary frontmatter was safely audited.
-    """
-    if path.is_symlink(): raise EvidenceError('agent template must not be a symlink')
-    text = path.read_text(encoding='utf-8')
-    if len(text.encode()) > 32768: raise EvidenceError('agent definition too large')
-    parts = text.split('---\n', 2)
-    if len(parts) != 3 or parts[0]: raise EvidenceError('invalid agent frontmatter')
-    config = {}
-    for line in parts[1].splitlines():
-        if not line.strip() or line.lstrip().startswith('#'): continue
-        key, sep, val = line.partition(':')
-        if not sep or key in config: raise EvidenceError('invalid/duplicate agent key')
-        config[key] = strict_json(val.strip())
-    required = {'name','description','tools','mainAgent','subagent','model',
-                'commandExecutionPolicy','mcpServers','skills','plugins'}
-    if set(config) != required or config['name'] != expected_name:
-        raise EvidenceError('unrecognized agent definition')
-    if config['tools'] != expected_tools or config['mainAgent'] is not True \
-            or config['subagent'] is not False or config['model'] != 'inherit' \
-            or config['commandExecutionPolicy'] != 'off' \
-            or any(config[k] != [] for k in ('mcpServers','skills','plugins')):
-        raise EvidenceError('agent capability expansion refused; use the bounded worker definitions')
-    if not isinstance(config['description'], str) or not parts[2].strip():
-        raise EvidenceError('agent prompt or description is empty')
-    return text
-
-
-def command(executable: str, model: str, agent: str, schema: Path, timeout: float) -> list[str]:
-    if not math.isfinite(timeout) or timeout <= 0: raise EvidenceError('invalid timeout')
-    return [executable, '--input-format', 'stream-json', '--output-format', 'stream-json',
+def command(executable: str, model: str, agent: str, schema: Path, timeout: float | None) -> list[str]:
+    argv = [executable, '--input-format', 'stream-json', '--output-format', 'stream-json',
             '--model', model, '--agent', agent, '--json-schema', str(schema),
-            '--print-timeout', f'{max(1, math.ceil(timeout))}s']
+            ]
+    if timeout is not None:
+        argv += ['--print-timeout', f'{math.ceil(timeout)}s']
+    return argv
 
 
 class StreamState:
-    def __init__(self, model: str, agent: str, tools: list[str], tool_limit: int):
-        self.model = model; self.agent = agent; self.required_tools = set(tools)
-        self.allowed_tools = self.required_tools | {'ask_permission'}
-        self.tool_limit = tool_limit; self.init = None; self.result = None
+    def __init__(self, model: str, agent: str, tools: list[str]):
+        self.model = model; self.agent = agent
+        self.allowed_tools = set(tools) | {'ask_permission','manage_task'}
+        self.init = None; self.result = None
         self.step_ids: set[int] = set(); self.unknown_events = 0
         self.conversation_id = None; self.permission_mode = None
         self.error: str | None = None
@@ -104,10 +50,12 @@ class StreamState:
         if not raw.strip(): return
         if self.error: return
         try:
-            if len(raw) > LINE_LIMIT: raise EvidenceError('AGY event line exceeds size limit')
             event = strict_json(raw)
             if not isinstance(event, dict): raise EvidenceError('event is not an object')
             kind = event.get('event')
+            if kind not in {'init','step_update','result'}:
+                self.unknown_events += 1
+                return
             if self.result is not None: raise EvidenceError('unexpected event after terminal result')
             if kind == 'init':
                 if self.init is not None: raise EvidenceError('duplicate init event')
@@ -115,16 +63,7 @@ class StreamState:
                 if not isinstance(data, dict): raise EvidenceError('missing init payload')
                 if data.get('model') != self.model: raise EvidenceError('reported model differs from pinned model')
                 if data.get('agent') != self.agent: raise EvidenceError('requested custom agent not active')
-                tools = data.get('tools')
-                if not isinstance(tools, list) or any(not isinstance(x, str) for x in tools):
-                    raise EvidenceError('init tool set is not reported')
-                # AGY 1.2.0 advertisedTools() enumerates the CLI catalog, regardless
-                # of the custom agent. It cannot prove capability expansion.
-                if not self.required_tools <= set(tools):
-                    raise EvidenceError('required tools missing from agy catalog')
                 self.permission_mode = data.get('permission_mode')
-                if self.permission_mode == 'always-proceed':
-                    raise EvidenceError('always-proceed permissions are not allowed by this worker')
                 self.init = data; self.conversation_id = event.get('conversation_id')
             elif kind == 'step_update':
                 if self.init is None: raise EvidenceError('step before checked init')
@@ -140,7 +79,6 @@ class StreamState:
                     index = step.get('step_index')
                     if type(index) is not int or index < 0: raise EvidenceError('invalid tool step index')
                     self.step_ids.add(index)
-                    if len(self.step_ids) > self.tool_limit: raise EvidenceError('observed tool-call limit exceeded')
             elif kind == 'result':
                 data = event.get('result')
                 if not isinstance(data, dict): raise EvidenceError('missing terminal result')
@@ -156,9 +94,6 @@ class StreamState:
                 # Resume is controlled by argv, not inferred from this counter.
                 if data.get('status') == 'SUCCESS' and (type(data.get('num_turns')) is not int or data['num_turns'] < 1):
                     raise EvidenceError('invalid provider turn count')
-            else:
-                self.unknown_events += 1
-                raise EvidenceError('unsupported AGY event; update adapter instead of guessing')
         except (ValueError, UnicodeError, RecursionError) as exc:
             self.error = str(exc)
 
@@ -169,7 +104,7 @@ class StreamState:
         # Read ONE terminal cumulative usage. Never add step totals, cache, or thinking.
         counts['source'] = 'single_terminal_result.usage'
         counts['provider'] = 'antigravity_cli'
-        counts['usage_complete'] = bool(not self.error and self.result is not None
+        counts['usage_complete'] = bool(self.result is not None
                 and all(counts[k] is not None for k in ('input_tokens','output_tokens','total_tokens')))
         return counts
 
@@ -184,8 +119,8 @@ def stop_process_group(proc: subprocess.Popen) -> None:
         proc.wait(timeout=2)
 
 
-def supervise(argv: list[str], workspace: Path, out: Path, timeout: float,
-              state: StreamState, log_limit: int = LOG_LIMIT) -> tuple[int,str|None,float]:
+def supervise(argv: list[str], workspace: Path, out: Path, timeout: float | None,
+              state: StreamState) -> tuple[int,str|None,float]:
     """Stream monitor; termination is local/best effort, NOT remote spend cancellation.
 
     init checks are diagnostics/backstops, not a security boundary before the model
@@ -207,25 +142,17 @@ def supervise(argv: list[str], workspace: Path, out: Path, timeout: float,
                     pending += chunk
                     while b'\n' in pending:
                         line, pending = pending.split(b'\n',1); state.feed(line)
-                    if len(pending) > LINE_LIMIT:
-                        state.error = 'oversize unfinished event line'; break
             try:
                 while proc.poll() is None:
                     pump()
                     if state.error:
                         reason = 'protocol_or_capability_error'; stop_process_group(proc); break
-                    if time.monotonic()-start >= timeout:
+                    if timeout is not None and time.monotonic()-start >= timeout:
                         reason = 'local_deadline'; stop_process_group(proc); break
-                    if os.fstat(events.fileno()).st_size + os.fstat(errors.fileno()).st_size > log_limit:
-                        reason = 'log_budget'; stop_process_group(proc); break
                     time.sleep(0.05)
                 code = proc.wait(timeout=3)
-                observed = os.fstat(events.fileno()).st_size + os.fstat(errors.fileno()).st_size
-                if observed > log_limit:
-                    reason = reason or 'log_budget'
-                else:
-                    pump()
-                    if pending.strip(): state.feed(pending)
+                pump()
+                if pending.strip(): state.feed(pending)
                 if state.error: reason = reason or 'protocol_or_capability_error'
             except BaseException:
                 stop_process_group(proc); raise

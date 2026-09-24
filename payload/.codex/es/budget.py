@@ -22,8 +22,8 @@ def initialize(state: Path, root: Path, task: bytes) -> None:
     root=root.resolve(strict=True);state=state.resolve()
     if state==root or root in state.parents:
         raise EvidenceError('budget state must be outside the repository')
-    if not task.strip() or len(task)>16384:
-        raise EvidenceError('task must be nonempty and <=16384 bytes')
+    if not task.strip():
+        raise EvidenceError('task must be nonempty')
     state.mkdir(mode=0o700,parents=True,exist_ok=False);os.chmod(state,0o700)
     db=state/'budget.sqlite3'
     with sqlite3.connect(db) as c:
@@ -103,7 +103,7 @@ def main() -> int:
     a=p.parse_args()
     try:
         if a.cmd=='init':
-            with a.task_file.open('rb') as f:task=f.read(16385)
+            task=a.task_file.read_bytes()
             initialize(a.state_dir,a.repo,task)
         elif a.cmd=='mark-abandoned':
             finish(a.state_dir,a.job_id,{'status':'manually_abandoned','usage_complete':False,'usage':None})

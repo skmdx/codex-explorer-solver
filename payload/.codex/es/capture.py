@@ -16,7 +16,8 @@ import sys
 import time
 from typing import Any
 from evidence import EvidenceError, compact_json
-from locate import stop_process_group, write_private
+from agy_backend import stop_process_group
+from locate import write_private
 
 
 def tail(path: Path, budget: int = 1536) -> dict[str, Any]:

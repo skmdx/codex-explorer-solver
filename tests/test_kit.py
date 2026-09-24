@@ -220,14 +220,10 @@ class EvidenceTests(unittest.TestCase):
 
 
 class ConfigInstallerTests(unittest.TestCase):
-    def test_agy_agents_are_main_only_and_parent_disabled(self):
-        import agy_backend
+    def test_parent_delegation_is_disabled(self):
         self.assertFalse((KIT/'payload/.codex/agents').exists())
         cfg=tomllib.loads((KIT/'payload/.codex/es/config.snippet.toml').read_text())
         self.assertFalse(cfg['agents']['enabled'])
-        for name in ('es-explorer','es-deep-explorer','es-reader'):
-            tools=['finish'] if name=='es-reader' else ['view_file','grep_search','finish']
-            agy_backend.agent_definition(KIT/'payload/.codex/es/agy_agents'/f'{name}.md',name,tools)
 
     def test_skill_is_explicit_opt_in(self):
         text=(KIT/'payload/.agents/skills/explore-solve/agents/openai.yaml').read_text()

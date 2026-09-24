@@ -12,7 +12,7 @@
 既定のスキル動作は明示呼出しのみで、自動委譲は有効にしていない。
 
 AGY起動にはソースexportを `--add-dir` で渡す。2026-09-24のAGY 1.2.0では、
-init.toolsは実効権限ではなく全体カタログを通知する。定義と実際のtool eventを検査し、
+init.toolsは実効権限ではなく全体カタログを通知する。実際のtool eventを検査し、
 構造化応答用のfinishを含めたReader/Explorerで実機成功を確認した。実機の使用量・成立条件は
 `/home/user/codex-work/note/codex-explorer-solver/20260924/` の測定記録を参照。
 
@@ -50,8 +50,8 @@ Codex parent (Solver; native subagents disabled)
 
 これは `agy --agent` で制限付きの**メインエージェント**を起動する方式です。
 Codexからspawnする方式でも、AGYからさらに子をspawnする方式でもありません。
-CLIの正規slugは `agy models` で確認します。見つからなければ停止し、別モデルに
-フォールバックしません。APIのモデルIDをCLIのslugと混同しないでください。
+モデルは `agy.toml` または `--model` で指定できます。利用可否は実行時にAGYが判定し、
+別モデルへの自動フォールバックは行いません。
 
 ## 2. 要件
 
@@ -113,7 +113,7 @@ python3 .codex/es/locate.py --check
 codex -c 'agents.enabled=false'
 ```
 
-`--check` はhelp/version/model一覧を調べるだけで、モデルへの課題送信はしません。
+`--check` はCLIのversionを確認するだけで、モデルへの課題送信はしません。
 認証済み推論・custom agentの適用・返却形式までの実機確認ではありません。
 Codex内で明示的にスキルを呼びます。
 
@@ -133,8 +133,7 @@ $explore-solve
 ## 5. 手動で探索を実行する
 
 ここでは使い捨ての私有ディレクトリを例にします。再開をまたぐ長いタスクでは、
-消去されない私有ディレクトリを指定してください。同じタスクで新しいSTATEを作り、
-上限を回避してはいけません。
+消去されない私有ディレクトリを指定し、同じSTATEに使用量の履歴をまとめてください。
 
 ```bash
 RUN="$(mktemp -d "${TMPDIR:-/tmp}/codex-es-agy.XXXXXX")"
@@ -185,14 +184,14 @@ AGYは元リポジトリを作業ディレクトリにせず、私有の一時�
 含みます。未追跡は `--include-untracked` で明示追加します（ignore対象は含みません）。
 Readerの明示 `--path` は未追跡ファイルも対象にできます。
 
-agent設定、.git、credentialらしいファイル、バイナリ、symlinkなどは除外します。
+ルートのagent設定、.git、credentialらしいファイル、バイナリ、symlinkなどは除外します。
+`payload/.codex/`のような配布用サブディレクトリはソースとして含めます。
 除外記録は `source-manifest.json` にあります。これは万能な秘密情報検出ではありません。
 workerはexport範囲の外の不存在を証明しません。Git submodule内容や未取得LFS実体なども
 自動的に完全対応したとは扱わないでください。
 
-既定の上限: 5,000ファイル、合計64 MiB、1ファイル1 MiB。Readerは12ファイル・192 KiB。
-大きい単体ファイルなどの除外を記録し、合計上限超過は部分的に黙って切らず停止します。
-`--scope` や設定で調整してください。値は論文由来の最適値ではありません。
+ファイル数・合計サイズ・Reader入力数の固定上限はありません。必要な範囲は`--scope`で指定します。
+原文検証器が扱えないファイル（UTF-8以外、単体10 MiB超など）はmanifestへ除外理由を記録します。
 
 Geminiにはhashを作らせません。返却時にホストが**実行前に保存したバイト列のhash**を
 付加し、exportと元の全対象ファイルの一致を確認します。引用しなかった入力も確認するので、
@@ -203,21 +202,20 @@ Geminiにはhashを作らせません。返却時にホストが**実行前に�
 
 - custom main agentはExplorerで `view_file` / `grep_search` / `finish`、Readerで `finish` のみ。
   `subagent:false`、`commandExecutionPolicy:off`、MCP/skills/pluginsなしの定義です。
-- CLIの `init` でモデル・agent・必須toolの掲載を確認します。tool listは全体カタログであり、
-  実効権限とは扱いません。観測された書込み、shell、MCPなどの呼出しと全権許可モードを拒否します。
+- CLIの `init` でモデル・agentを確認します。全体toolカタログや全体permission modeでは停止せず、
+  観測された書込み、shell、MCPなどの呼出しを拒否します。補助用manage_taskは許容します。
 - AGYのplanモードやterminal sandboxをread-only保証と誤解しません。
   本キットはOS sandboxを構築せず、AGYの全体設定・global hooksも書き換えません。
   custom tools制限はAGYの仕様と実装に依存します。init監視は実行開始前の安全境界では
   なく、予期しない構成を検出する補助です。global設定・拡張も利用者側で点検してください。
 - structured_outputだけを受け取り、コードブロック・説明文からJSONを「救済」しません。
-  schema逸脱、未知のevent、複数result、古い原文、不正な行参照などはエラーにします。
+  schema逸脱、複数result、古い原文、不正な行参照などはエラーにします。未知の通知eventは無視します。
 - 認証・モデル未提供・権限・quotaの失敗で自動的にモデル変更・再実行しません。
 - 同じSTATEで回数無制限、同時1件。追加探索にも回数上限はありません。
   失敗も記録し、usageが不明なら0とせず不明のまま後続実行を受け付けます。
   `--max-calls`、`--soft-token-limit`、`--allow-unknown-usage`は廃止しました。
-- 局所deadline・log上限・観測tool回数監視は強制課金上限ではありません。
-  超過したtool eventが通知された時点でその呼出しはすでに始まっている場合があります。
-  プロセス停止後も処理済みの費用は取り消されません。
+- 探索内部のtool回数とログ量による停止はありません。通常はAGY標準の待機時間を使い、
+  必要な場合だけ`--timeout 秒`で期限を指定します。AGY 1.2.0の標準待機時間は5分です。
 
 ## 8. 使用量とプライバシー
 

@@ -23,7 +23,7 @@ Codexのnative child、独立codex exec、AGYの再帰的な子を利用しな�
 ## 通信契約
 
 `agy --input-format stream-json --output-format stream-json --model SLUG --agent NAME
---json-schema SCHEMA_PATH --print-timeout 120s` をshellなしのargvで実行する。
+--json-schema SCHEMA_PATH` をshellなしのargvで実行する。期限指定時のみ`--print-timeout`を渡す。
 stdinに `{event:user,message:{content:...}}` を1行送りEOF。`-p`を併用しない。
 resume/continueを使わないため、最終usageは一回のworker内の累積値として扱える。
 プロトコル上はinit→step_update*→result。stepのusageは足さない。
@@ -31,20 +31,18 @@ num_turnsはworker内部の継続回数であり、resumeの有無ではない�
 
 CLI出力を原則として親へ表示しない。events.jsonl、stderr.log、request.jsonlを私有に保存する。
 最終structured_outputはschemaに加えて独立した形状・参照検証を通す。自由文・Markdownから
-推測抽出する経路は持たない。CLIが未知のmodel slugを拒否する仕様に加え、ローカルmodel一覧と
-initのmodelを検査する。認識外のCLI版で安全に動いたふりをするより、失敗を明示する。
+推測抽出する経路は持たない。モデルの利用可否はCLIが判定し、initで実際のmodelを確認する。
+未知の通知eventでは処理を中断しない。既知eventの構造と会話IDは検証する。
 
 ## Explorer / Readerの境界
 
-Explorerは `view_file` と `grep_search`、応答用の `finish` を使う。実行前に定義のfrontmatterを
-検査する。AGY 1.2.0のinit.toolsは全体カタログなので必須toolの掲載だけ確認し、実効権限とは
-扱わない。実際のtool eventは許可リストで検査する。Readerは原文を番号付きJSONに
-まとめ、tool listはfinishのみ。ask_permissionは補助ツールとして両方に許容する。
+Explorerは `view_file` と `grep_search`、応答用の `finish` を使う。
+管理下のagent定義はそのままCLIに渡し、独自frontmatter検査は行わない。
+AGY 1.2.0のinit.toolsは全体カタログなので受付条件に使わない。
+実際のtool eventを検査する。Readerは原文を番号付きJSONにまとめ、tool listはfinishのみ。
+ask_permissionとmanage_taskは補助ツールとして両方に許容する。
 finishがなければ応答後もCLIが継続を要求する。versionは整数の上下限で1に固定し、
 AGYの関数schema変換が拒否する数値enumを使わない。
-実機の生成要求にはCLIが補助用manage_taskも追加していた。キットの許可リストには
-追加せず、観測された場合は拒否する。生成要求の制限はOS sandboxの保証ではない。
-CLIが別の必須toolを報告する場合、勝手に許可リストを広げず実仕様を確認する。
 
 `mainAgent:true`, `subagent:false`。`model:inherit`とCLIの具体的なslugを組み合わせる。
 `commandExecutionPolicy:off`, MCP/skills/pluginsは空。model/agentの実際の解決もinitで確認する。
@@ -55,8 +53,9 @@ CLIが別の必須toolを報告する場合、勝手に許可リストを広げ�
 探索を元の作業ディレクトリから切り離すため、現在のworking treeの対象バイト列を
 使い捨てexportへコピーする。Gitオブジェクトのcommit内容ではないので未commit変更が反映される。
 既定はtracked files、untrackedは明示追加。Readerのpathsは完全に明示。
-metadata/config/credential-like pathを除外するが、秘密の完全検出は主張しない。
-上限超過を黙ってtruncateしない。個別除外はmanifestに記録し、不存在の主張は固定export集合に限定。
+ルートで有効なagent設定とmetadata/credential-like pathを除外する。
+配布用サブディレクトリにあるagent設定・実装はソースとして扱う。
+ファイル数・合計サイズによる打切りは行わず、個別除外はmanifestに記録する。
 
 AGYのwireにはhashがなく、ホストがmanifestの実行前hashを付ける。終了時にexportとoriginal双方の
 全対象ファイルを検査し、uncited inputの変更も拒否する。何を根拠にしたかの意味的正確性は
@@ -68,7 +67,7 @@ AGYのwireにはhashがなく、ホストがmanifestの実行前hashを付ける
 モデル開始前にSTATEにreserveし、終わればfinishする。同時実行は1件、回数は無制限。
 強い探索も最初から実行でき、繰り返し回数を制限しない。呼出し失敗も履歴に残す。
 終了時usageの欠落はunknownとして記録し、後続の受付を妨げない。
-ローカルプロセス終了は遠隔の課金キャンセルを保証しない。観測tool上限も事前課金上限ではない。
+ツール回数とログ量による探索停止は行わない。期限は指定時だけラッパーが監視する。
 旧STATEに保存された回数・token上限も受付条件として使わない。
 
 ## Hooksとの役割分担

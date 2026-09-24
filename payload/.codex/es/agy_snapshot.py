@@ -13,9 +13,10 @@ import subprocess
 from typing import Any
 from evidence import EvidenceError, compact_json, source_bytes, source_path, load_handoff
 
-EXCLUDED_DIRS = {'.git', '.agents', '.codex', '.gemini', '.agent', '.claude',
-                 '.ssh', '.aws', 'node_modules', '.venv', '__pycache__'}
-EXCLUDED_NAMES = {'AGENTS.md', 'GEMINI.md', 'CLAUDE.md', '.npmrc', '.pypirc',
+EXCLUDED_DIRS = {'.git', '.ssh', '.aws', 'node_modules', '.venv', '__pycache__'}
+ROOT_AGENT_DIRS = {'.agents', '.codex', '.gemini', '.agent', '.claude'}
+ROOT_AGENT_FILES = {'agents.md', 'gemini.md', 'claude.md'}
+EXCLUDED_NAMES = {'.npmrc', '.pypirc',
                   'credentials.json', 'credentials', 'id_rsa', 'id_ed25519'}
 
 
@@ -31,6 +32,8 @@ def safe_relative(name: str) -> str:
 
 def exclusion(name: str) -> str | None:
     p = PurePosixPath(safe_relative(name))
+    if p.parts[0].lower() in ROOT_AGENT_DIRS or (len(p.parts)==1 and p.name.lower() in ROOT_AGENT_FILES):
+        return 'active_agent_configuration'
     if {x.lower() for x in p.parts} & {x.lower() for x in EXCLUDED_DIRS} or p.name.lower() in {x.lower() for x in EXCLUDED_NAMES}:
         return 'configuration_or_generated_or_credential_path'
     if p.name.startswith('.env') or p.suffix.lower() in {'.pem', '.key', '.p12', '.pfx', '.keystore'}:
@@ -59,7 +62,7 @@ def in_scope(name: str, scopes: list[str]) -> bool:
 
 
 def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
-           scopes: list[str], include_untracked: bool, limits: dict[str, Any]) -> dict:
+           scopes: list[str], include_untracked: bool) -> dict:
     """Export current worktree bytes, NOT committed Git blobs. No silent cap truncation."""
     for scope in scopes: safe_relative(scope)
     if mode == 'reader':
@@ -67,8 +70,6 @@ def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
             raise EvidenceError('reader requires explicit --path(s)')
         if len(paths) != len(set(paths)):
             raise EvidenceError('duplicate reader input')
-        if len(paths) > limits['max_reader_files']:
-            raise EvidenceError('too many reader input files')
         candidates = paths
     else:
         candidates = [x for x in git_paths(root, include_untracked) if in_scope(x, scopes)]
@@ -79,23 +80,13 @@ def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
         try:
             reason = exclusion(name)
             if reason: raise EvidenceError(reason)
-            path = source_path(root, name)
-            if path.stat().st_size > limits['max_file_bytes']:
-                raise EvidenceError('file_exceeds_snapshot_file_limit')
             raw, _ = source_bytes(root, name)
-            if len(raw) > limits['max_file_bytes']:
-                raise EvidenceError('file_exceeds_snapshot_file_limit')
         except (EvidenceError, OSError) as exc:
             if mode == 'reader':
                 raise EvidenceError(f'reader input rejected ({name}): {exc}') from exc
             skipped.append({'path': name, 'reason': str(exc)[:160]})
             continue
-        if len(entries) >= limits['max_snapshot_files']:
-            raise EvidenceError('snapshot file cap exceeded; narrow --scope (nothing is silently truncated)')
         total += len(raw)
-        byte_limit = min(limits['max_snapshot_bytes'], limits['max_reader_bytes']) if mode == 'reader' else limits['max_snapshot_bytes']
-        if total > byte_limit:
-            raise EvidenceError('snapshot byte cap exceeded; narrow --scope or reader inputs')
         destination = workspace / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         with destination.open('xb') as stream: stream.write(raw)

@@ -28,7 +28,8 @@ Run with a fresh RUN directory:
 `python3 "$ES/locate.py" --repo . --task-file TASK --state-dir STATE --out-dir RUN`
 
 Reader/Explorer use Gemini 3.8 Flash Medium; `--deep` uses High for harder unresolved
-relationships. Calls are unlimited, one active worker at a time. Reuse STATE for
+relationships. Worker and internal tool calls are unlimited, one worker at a time.
+The default uses AGY's native timeout; set `--timeout SECONDS` only when needed. Reuse STATE for
 follow-ups and provide the missing question, not the full conversation. Failures
 and unknown usage stay in the ledger; unknown does not mean zero or block later calls.
 No automatic retries, model substitution, conversation resume, or permission expansion.
