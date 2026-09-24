@@ -26,7 +26,9 @@ if case=='bad_agent':agent='self'
 init={'event':'init','conversation_id':'fixture-1','init':{'cwd':os.getcwd(),'model':model,'agent':agent,'tools':tools,'permission_mode':'request-review'}}
 if case=='bypass':init['init']['permission_mode']='always-proceed'
 if case!='no_init':emit(init)
-if case=='timeout':time.sleep(10)
+if case=='timeout':
+    if os.getenv('FAKE_PID_FILE'):pathlib.Path(os.environ['FAKE_PID_FILE']).write_text(str(os.getpid()))
+    time.sleep(10)
 if case=='invalid_json':print('NOT JSON',flush=True);sys.exit(0)
 if case=='nested':emit({'event':'step_update','step_update':{'subagent_info':{'subagents':[{}]},'step_index':1}})
 if case=='unexpected_tool':emit({'event':'step_update','step_update':{'step_type':'tool','step_index':1,'tool_name':'run_command'}})

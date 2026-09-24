@@ -1,106 +1,58 @@
-# AGY source collection
+# AGY collection
 
-Use this reference only when the investigation needs AGY. Codex remains the Solver;
-ask Explorer for definitions, callers, state changes, conditions, and test locations
-needed for the current decision. Keep related callers/callees together. In follow-ups,
-pass known findings and ask only for missing evidence.
+Use `collect` for source facts missing from the next Solver decision. State the
+question and the needed conditions, updates or callers separately; do not ask it
+to solve an entire issue or find design flaws. Group facts sharing a source path.
+Existing conclusions belong in `known_findings`, not in another broad investigation.
 
-## Invoke
+The MCP call waits for completion. It does not return a running job to poll. If the
+host yields a code-mode cell, resume that same cell; do not restart or kill AGY
+because an observation wait expired. `timeout` is the collection deadline in seconds.
 
-Run at the target Git root. Write the collection request to TASK. Use absolute paths
-in the workspace's temporary directory for TASK, STATE, and RUN, outside the target Git
-repository. STATE is created on first use and reused for this task; RUN must be new.
+## Known symbol → LSP → AGY, in one cell
 
-Use ES resolved from SKILL.md (not from this reference directory).
-Construct COMMAND with `python3 ES/locate.py --repo REPO
---task-file TASK --state-dir STATE --out-dir RUN`. The default model is Gemini 3.8
-Flash High. Add only options the investigation needs:
+Use existing Symbols results where available. Otherwise request only the relations
+needed: `inspect` for definitions, `references` for uses, `call_hierarchy` for calls.
+Use `outline` or `search` first only when the position is unknown. If LSP answers the
+question directly, finish without AGY. Match the actual tool names exposed by the host.
 
-- `--scope DIR` narrows Git-tracked working-tree sources; `--include-untracked` adds
-  non-ignored untracked files.
-- `--mode reader --path FILE` sends known files directly; repeat `--path` as needed.
-  Reader does not combine with `--scope`, `--include-untracked`, or `--deep`.
-- `--deep` uses the configured `deep_model` (currently also Flash High).
-- `--timeout 900` gives a long investigation 15 minutes; AGY defaults to five minutes.
-- `--navigation-file NAV` adds LSP results to the initial prompt in localize mode.
-  Use the optional collection step below when a known symbol gives useful starting locations.
-
-### Optional LSP starting locations
-
-Reuse existing results. Otherwise choose only the needed Symbols queries: `inspect`
-for definitions, `references` for uses, or `call_hierarchy` for callers/callees.
-Use `outline` or `search` only if the symbol position is unknown. If LSP alone answers
-the question, finish directly without AGY. Related tests may need further search.
-
-Collect and save results in the same code-mode cell as the invocation below, without
-printing the full results. Set NAV to a new absolute file path beside TASK, outside
-RUN (locate.py requires RUN not to exist yet). Set LSP_ROOT to the workspacePath from the matching
-Symbols profile, not necessarily REPO. Positions passed to Symbols are 1-based.
-For example, with absolute FILE and known LINE and CHARACTER:
+Replace the example paths, position and question. `navigation.root` is the Symbols
+profile's workspacePath; it may be above the repository. Positions are 1-based.
 
 ```javascript
-const queries = [{tool: "references", args: {file: FILE, line: LINE, character: CHARACTER}}];
-const results = await Promise.allSettled(queries.map(q =>
-  tools[`mcp__language_servers__${q.tool}`](q.args)));
-const navigation = {root: LSP_ROOT, queries: queries.map((q, i) => {
-  const r = results[i];
-  return {...q, ...(r.status === "fulfilled"
-    ? {result: r.value} : {error: String(r.reason)})};
-})};
-const body = JSON.stringify(navigation, null, 2);
-await tools.apply_patch("*** Begin Patch\n*** Add File: " + NAV + "\n"
-  + body.split("\n").map(line => "+" + line).join("\n") + "\n*** End Patch");
+// @exec: {"yield_time_ms": 1200000, "max_output_tokens": 4000}
+const args = {file: "/absolute/repo/src/file.c", line: 120, character: 5};
+const results = await Promise.allSettled([tools.mcp__language_servers__references(args)]);
+const r = results[0];
+const navigation = {root: "/absolute/workspace", queries: [{tool: "references", args,
+  ...(r.status === "fulfilled" ? {result: r.value} : {error: String(r.reason)})}]};
+text(await tools.mcp__explore_solve__collect({
+  repo: "/absolute/repo", scratch_dir: "/absolute/workspace/tmp", scope: ["src"],
+  question: "Which condition prevents adoption of an old completion?",
+  evidence_needed: ["The adoption condition and writes to the version it checks"],
+  navigation, known_findings: "The completion carries a saved version."
+}));
 ```
 
-After a successful save, run COMMAND with `--navigation-file NAV` in this same cell.
-The awaited save throws on failure and stops the cell before COMMAND; do not catch
-that failure and continue with an old file.
-Keep tool errors as errors; they are not empty reference lists. Results are starting
-locations, not an export filter: choose `--scope` for the question, not just the LSP
-hits. Do not recursively collect a whole call graph before delegating.
+Do not print LSP results before the collection call. They go straight into its
+initial prompt. Errors remain unavailable results, not empty reference lists.
+`scope` covers the question's source area; LSP hits are starting points, not an
+exhaustive export filter. Without a useful symbol seed, pass `navigation: null`.
+Use an empty `known_findings` only for a new investigation.
 
-### Run and wait
+## Read only needed originals
 
-Start and wait in the **same** code-mode cell. Replace COMMAND and REPO below with
-the complete shell command and absolute Git root. The long enclosing yield prevents
-model-visible short polling while internal session waits run.
+`collect` returns `run_dir`, indexed locations, short observations and unresolved
+questions. These observations are leads, not verified semantic conclusions.
+Call `read_evidence(run_dir, ids)` for the locations needed now. It checks source
+hashes and combines overlapping lines. For large selections, repeat the same IDs
+without an offset: each call returns the next page until `complete` is true.
+`next_offset` reports where that next page starts.
+Completed selections return no duplicate source; explicit `offset: 0` rereads after
+context loss. `max_chars` is the response page size, not an
+evidence limit. Keep using returned originals instead of rereading them with sed.
 
-```javascript
-// @exec: {"yield_time_ms": 1200000, "max_output_tokens": 12000}
-let r = await tools.exec_command({cmd: COMMAND, workdir: REPO, yield_time_ms: 1000, max_output_tokens: 12000});
-const output = [r.output];
-while (r.session_id !== undefined) {
-  r = await tools.write_stdin({session_id: r.session_id, chars: "", yield_time_ms: 30000, max_output_tokens: 12000});
-  output.push(r.output);
-}
-text({...r, output: output.join("")});
-```
-
-If the host yields the cell, wait on that **same cell** with a long supported wait;
-do not start another investigation because observation timed out. Wait for AGY's
-evidence before reading its delegated source yourself. A longer enclosing wait does
-not change AGY's own deadline.
-
-## Use the result
-
-Default output gives status, scope counts, short observations, and verified numbered
-originals; overlapping original lines appear once. Use that text directly for Solver
-decisions. Source hashes establish identity, not the correctness of Explorer's
-interpretation.
-
-`ready` means collection completed, not that the user's task is solved. `partial` and
-`not_found` describe the exported scope. Resolve missing evidence locally or with a
-focused follow-up. Accounting errors can accompany usable evidence and do not require
-rerunning the investigation.
-
-RUN contains `report.txt` (displayed text), `report.json` (complete machine report),
-`handoff.json`, and `metrics.json`. If output is cut off, fetch only the missing part
-of `report.txt`; do not dump the whole JSON or repeat completed ranges. Use `--json`
-only for a programmatic consumer. Compare Codex and AGY usage separately only when
-measurement is part of the task.
-
-Encoding is detected per file, including mixed ASCII/UTF-8/CP932/EUC-JP; Codex need
-not preread. `--encoding PATH=CODEC` corrects a known detection error. Reader also
-accepts Git hooks, agent configuration, and absolute paths outside the repository as
-source data. Unexported files were not inspected. Clean up RUN and STATE after
-retaining any needed evidence.
+All originals and usage remain in `run_dir/report.json`; `report.txt` is a full
+diagnostic artifact, not the default context input. A failed collection returns
+its error and artifact path. Do not rerun successful collection because usage
+accounting failed. Keep useful artifacts, then remove the task's temporary run.

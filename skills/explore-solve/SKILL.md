@@ -15,10 +15,15 @@ Ask it for the missing evidence, not the entire user task. Group requests that s
 source and callers; split only when they need different source areas. There is no
 fixed limit on AGY calls or internal tool steps.
 
-**Only when using AGY**, read [references/agy.md](references/agy.md) before the call.
-It contains the invocation, mode choices, long wait, and handling of verified originals.
-After the handoff, make Solver decisions from those originals and read only missing
-context or source that changed.
+For AGY, use the plugin's `collect` MCP tool. It waits for the result inside one call.
+If the host yields a code-mode cell, wait on that same cell without restarting collection.
+Give the next decision and the missing code facts separately.
+Reuse known findings; reopen settled questions only for a source change, new failure, or counterexample.
+If known Symbols locations can seed the search, pass their results directly to
+`collect.navigation` using [the single-cell example](references/agy.md).
+Collection returns an index. Select needed IDs with `read_evidence`; repeat those
+IDs without an offset until `complete` is true. Judge from these originals and
+reuse them, reading further only for missing or changed source.
 
 Resolve ES to the absolute path of `../../payload/.codex/es` relative to this SKILL.md's
 directory. This is the installed plugin's tools directory, not the target repository.

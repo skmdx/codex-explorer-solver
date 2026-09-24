@@ -1,11 +1,12 @@
 {
   "name": "codex-explorer-solver",
-  "version": "0.1.0+codex.20260924110403",
+  "version": "0.1.0+codex.20260924131251",
   "description": "Source investigation with Symbols, AGY evidence collection, and exact-source implementation.",
   "author": {
     "name": "skmdx"
   },
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Explore \u2192 Solve",
     "shortDescription": "Source exploration and evidence for Codex",

@@ -1,74 +1,63 @@
 # 設計とツールの使い方
 
 通常の利用方法は[README](../README.ja.md)を参照してください。
-ここでは、調査を手動実行するときや、ツール本体を変更するときに必要な内容を説明します。
+ここでは、MCPの引数・保存ファイルと、ツール本体の実装を説明します。
 
-## 手動でAGYを呼ぶ
+## 通常の実行入口
 
-対象のGitリポジトリのルートで実行します。Python 3.11以降、Git、認証済みのAGYが必要です。
-文字コード判定には `charset-normalizer` を使います。`python3 -m pip install -r requirements.txt` で依存ライブラリを導入します。
+[server.py](../payload/.codex/es/server.py)は`collect`と`read_evidence`をMCPで公開します。
+`collect`は次の判断・不足するコード事実・既知の結論・LSP結果を受け取り、`locate.py`の終了まで待ちます。
+初期結果は引用IDの一覧です。`read_evidence`は選択IDの現在の原文をhash照合して返します。
+`max_chars`はページサイズで、全原文は保存済みです。同じ選択の読取り位置を実行先へ保存し、
+省略時は続きから、明示した`offset`があればその位置から返します。重なる引用行はまとめます。
+MCP呼出しの取消時はrunnerへSIGINTを送り、AGYの子プロセスを停止して終了を待ちます。
+
+## 収集の指定
+
+`collect`にはリポジトリの絶対パス、次の判断、不足する根拠、既知の結論、LSP結果を渡します。
+`scratch_dir`は対象リポジトリ外の既存の一時ディレクトリです。
+サーバーがその下に実行ごとの作業先を作り、収集結果の`run_dir`を返します。
 プロセス制御はLinux・macOS・WSLを対象にしています。
 
-```bash
-ES=/absolute/plugin/path/payload/.codex/es
-RUN=$(mktemp -d /home/user/codex-work/tmp/explore-solve.XXXXXX)
-
-cat > "$RUN/task.txt" <<'TASK'
-ログイン失敗時の通知がどこで生成されるか調べてください。
-通知を生成する関数と呼出し元を、ファイル名・行番号付きで示してください。
-TASK
-
-python3 "$ES/locate.py" --repo . \
-  --task-file "$RUN/task.txt" \
-  --state-dir "$RUN/state" \
-  --out-dir "$RUN/explore"
-```
-
-`state-dir`はタスクの実行履歴を置く場所です。初回に自動作成され、追加調査でも同じ場所を使います。
-`out-dir`はその1回の結果を置く、新しいディレクトリです。どちらも対象リポジトリの外に置きます。
-同じソースや呼出し元を使う証拠収集はまとめ、探索範囲が別になる場合に分けます。
-AGYには定義・呼出し・状態更新・条件分岐・テストの位置と原文を収集させます。
-競合順序の構成、保証範囲の判断、修正方針はCodexが担当します。
-見つかった根拠と未解決の問いは`partial`でも返せます。Codexが結果を統合し、不足分だけを追加調査します。
-
-| 調査方法 | 追加する引数 |
+| 調査方法 | `collect`の引数 |
 |---|---|
-| ディレクトリを絞って検索する | `--scope src --scope tests` |
-| 指定ファイルの全文を読ませる（Reader） | `--mode reader --path src/login.py`。複数ファイルは`--path`を繰り返す |
-| `deep_model`で検索する | `--deep`。既定値は通常と同じHigh。Readerとは併用しない |
-| 未追跡ファイルも検索対象にする | `--include-untracked`。Gitのignore対象は含まない |
-| 実行期限を指定する | 例：`--timeout 900`。省略時は5分。長い横断調査では期限を明示する |
+| ディレクトリを絞って検索する | `scope: ["src", "tests"]` |
+| 指定ファイルの全文を読ませる（Reader） | `paths: [".git/hooks/pre-commit"]`。`scope: []`, `navigation: null`を指定 |
+| `deep_model`で検索する | `deep: true`。既定値は通常と同じHigh。Readerとは併用しない |
+| 未追跡ファイルも検索対象にする | `include_untracked: true`。Gitのignore対象は含まない |
+| 実行期限を指定する | `timeout: 900`（既定値、秒） |
 
-Readerは`--scope`・`--include-untracked`と併用せず、明示したファイルだけを渡します。
-モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`--model`を使います。
+Readerは明示したファイルだけを渡し、`include_untracked`とは併用しません。
+モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`model`を使います。
+`locate.py`はMCPサーバーが起動する内部ワーカーです。個別プロセスにすることで取消時にSIGINTを送り、
+既存の収集終了処理とAGY子プロセスの後片付けを実行します。
 
 ### LSPの探索結果を渡す
 
-localizeでは`--navigation-file FILE`でSymbolsの結果を初期入力へ含められます。
+検索では`navigation`でSymbolsの結果を初期入力へ含められます。
 JSONは`root`（LSPのworkspacePathの絶対パス）と`queries`（問い合わせ条件と結果の配列）を持ちます。
 結果のテキストは解析し直さずそのまま渡します。相対パスは`root`基準で解釈し、
 対象リポジトリ内の位置をソースコピー内の同じ相対位置へ読み替えます。
 範囲外の候補は未調査の手掛かりであり、元リポジトリを直接読む指示にはしません。
 
-Codexは必要な定義・参照・呼出し関係だけを指定します。LSP結果の保存とAGY起動を同じセルで行い、
-結果全文をCodexへ表示して転記する往復を省きます。具体例は[AGY参照手順](../skills/explore-solve/references/agy.md#optional-lsp-starting-locations)にあります。
+通常はMCPの`navigation`引数へSymbols結果を直接渡します。保存はサーバーが行います。
+具体例は[AGY参照手順](../skills/explore-solve/references/agy.md)にあります。
 LSPだけで回答できる問いにはAGYを使いません。LSP結果からexport範囲を自動縮小せず、
 Geminiは足りない条件・呼出し・テストを追加探索します。失敗した問い合わせも結果と区別して渡します。
 入力は`RUN/navigation.json`に保存します。その回の探索用で、STATEへの蓄積は行いません。
 
-## 結果を読む
+## 結果と保存ファイル
 
-標準出力は、実行状態・収集状態・対象件数・短い観察事実・番号付き原文です。
-重なる原文行は表示時に統合し、異なる観察事実は残します。件数や行数で切り捨てません。
-その原文を使って判断し、必要なら欠けている呼出し元や周辺を確認します。
-機械処理には `--json` を指定します。完全なJSONには `status`・`handoff_status`・`usage`・`scope`・`error`、
-ハッシュと原文を含む `evidence` があり、標準出力の形式にかかわらず `report.json` へ保存します。
+`collect`は実行状態・収集状態・使用量・引用位置を返します。
+原文は`read_evidence`から選択して取得します。重なる原文行は統合し、異なる観察事実は残します。
+完全なJSONには `status`・`handoff_status`・`usage`・`scope`・`error`、
+ハッシュと原文を含む `evidence` があり、`report.json`へ保存します。
 
 実行先には次のファイルを保存します。
 
 | ファイル | 内容 |
 |---|---|
-| `report.txt` | 通常出力と同じ、重複をまとめた原文付きテキスト |
+| `report.txt` | 重複をまとめた原文付きテキスト |
 | `report.json` | 原文と使用量を含む完全な実行結果 |
 | `handoff.json` | ハッシュ付きの引用位置と調査結果。原文自体は含まない |
 | `metrics.json` | 成否、使用モデル、使用量、失敗理由 |
@@ -77,18 +66,11 @@ Geminiは足りない条件・呼出し・テストを追加探索します。�
 | `sources/` | AGYが調べたUTF-8のソースコピー |
 | `workspace/` | 調査用エージェントの実行設定 |
 
-出力が切れた場合は `report.txt` の欠けた箇所だけを読みます。保存した引用を現在のソースと再照合するときと、使用量の履歴を見るときは次を使います。
-
-```bash
-python3 "$ES/evidence.py" show --root . --handoff "$RUN/explore/handoff.json"
-python3 "$ES/budget.py" status --state-dir "$RUN/state"
-```
-
-エラー時は出力の `Error` を確認し、追加情報が必要なら`metrics.json`を読みます。
+原文は同じID選択で`read_evidence`を繰り返すと続きから取得できます。取得時に現在のソースと再照合します。
+エラー時は`error`を確認し、追加情報が必要なら`metrics.json`を読みます。
 AGYは期限切れでも`SUCCESS`と空の結果を返すことがあります。構造化結果がなければ失敗として扱い、
-標準エラーの期限切れ理由も`error`へ返します。追加調査では問いの範囲と`--timeout`を見直します。
+標準エラーの期限切れ理由も`error`へ返します。追加調査では問いの範囲と`timeout`を見直します。
 起動設定や結果保存など、実行処理の外に出た例外は`invocation_failed`、使用量記録の失敗は`accounting_failed`です。
-CLIの引数構文エラーは標準エラー出力に返ります。
 `accounting_failed`でも検証済みの`evidence`は返るため、調査をやり直さず記録側の問題を解消します。
 ソースが変わっていた場合は、その結果を編集の根拠にせず現在の原文を確認します。
 作業後は必要な結果を回収し、`RUN`以下の一時コピーとログを削除します。
@@ -114,7 +96,7 @@ Readerはリポジトリ外の絶対パスやsymlinkも扱えます。Explorer�
 文字コードはファイルごとに判定し、UTF-8へ変換して渡します。ASCII・UTF-8・CP932・EUC-JPが
 混在した入力でも、Codexの先読みや指定は不要です。判定した文字コードをmanifestとhandoffに保存し、
 引用の再取得にも使います。短い文字列などでは判定を誤る場合があり、既知の誤判定は
-`--encoding path/to/file=cp932` でそのファイルだけ訂正できます。複数指定はオプションを繰り返します。
+`encodings: {"path/to/file": "cp932"}`でそのファイルだけ訂正できます。
 
 AGY終了後は、コピーした全ファイルについて、コピーと元ソースが実行前の内容に一致するか確認します。
 変換前の原本とUTF-8コピーのハッシュを別々に記録します。引用のハッシュと文字コードはAGYに生成させず、実行前の記録から付けます。
@@ -133,7 +115,7 @@ AGYの全体ツール一覧は、実際に呼び出せるツールの一覧と�
 この制御はCLIの動作を検査するもので、OSの隔離環境を作るものではありません。
 認証・モデル・応答形式の問題で失敗した場合、自動で再実行したり別モデルへ切り替えたりしません。
 
-Codex側の起動と待機は[AGY参照手順](../skills/explore-solve/references/agy.md#invoke)の一つのセルで行います。
+Codex側は[AGY参照手順](../skills/explore-solve/references/agy.md)に従い、通常はMCPの`collect`を呼びます。
 
 ## 同時実行と使用量
 

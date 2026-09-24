@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "explore-solve": {
+      "command": "uv",
+      "args": ["run", "--script", "payload/.codex/es/server.py"],
+      "cwd": ".",
+      "startup_timeout_sec": 60,
+      "tool_timeout_sec": 3600
+    }
+  }
+}
