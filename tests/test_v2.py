@@ -211,8 +211,10 @@ class CaptureTests(unittest.TestCase):
         r,_=capture(self.root,self.base/'run',[sys.executable,'-c',"import sys;sys.stdout.buffer.write(b'\\xff\\xfe')"])
         self.assertIsNone(r['stdout']['tail'])
     def test_serialized_preview_is_bounded(self):
-        r,_=capture(self.root,self.base/'run',[sys.executable,'-c',"import sys;sys.stdout.buffer.write(b'\\x00'*10000);sys.stderr.buffer.write(b'\\x01'*10000)"])
-        self.assertLessEqual(len(json.dumps(r).encode()),6144)
+        for code in (0,1):
+            r,actual=capture(self.root,self.base/f'run{code}',[sys.executable,'-c',f"import sys;sys.stdout.buffer.write(b'\\x00'*10000);sys.stderr.buffer.write(b'\\x01'*10000);sys.exit({code})"])
+            self.assertEqual(actual,code)
+            self.assertLessEqual(len(json.dumps(r).encode()),6144)
     def test_existing_output_not_overwritten(self):
         (self.base/'run').mkdir()
         with self.assertRaises(FileExistsError):capture(self.root,self.base/'run',['echo','x'])
