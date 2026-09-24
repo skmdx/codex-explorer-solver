@@ -9,14 +9,14 @@ Codexのnative child、独立codex exec、AGYの再帰的な子を利用しな�
 
 ## モジュール境界
 
-- `locate.py`: モード選択、事前確認、export、予算受付、呼出し、検証、最小限の返却。
+- `locate.py`: モード選択、事前確認、export、実行受付、呼出し、検証、最小限の返却。
 - `agy_backend.py`: 一次仕様に沿ったCLIとNDJSON。初期化・tool・最終resultを監視。
 - `agy_snapshot.py`: モデルを使わないexport、原文集合の検証、hash付加。
 - `agy.toml`: キット独自の設定。Googleのglobal settingsではない。
 - `agy_agents/*.md`: 起動時だけexportの`.agents/agents/`へ配置するmain-agent定義。
 - `agy-handoff.schema.json`: モデルが返すhashなしの構造。
 - `handoff.schema.json` / `evidence.py`: 親が読む従来互換のhash付き構造と検証。
-- `budget.py`: 同じSTATEに対する外部worker受付の直列化と上限。
+- `budget.py`: 同じSTATEに対する外部worker受付の直列化と使用量の記録。
 - `hook_*.py`, `configure_hooks.py`: v3から変更なし。登録の再実施は必須ではない。
 
 ## 通信契約
@@ -62,12 +62,13 @@ AGYのwireにはhashがなく、ホストがmanifestの実行前hashを付ける
 証明できないため、親は原文を読む。実行中の追加ファイルや変更後に元に戻す操作まで捕捉する
 原子的な全repo snapshotではない。独立copyの共有利用やatomic read-only mountとも区別する。
 
-## 予算
+## 実行履歴と使用量
 
-モデル開始前にSTATEにreserveし、終わればfinishする。強い探索は先行workerが存在するときだけ。
-呼出し失敗も受付枠を戻さない。終了時usageの欠落はunknown。通常次の受付を拒否する。
+モデル開始前にSTATEにreserveし、終わればfinishする。同時実行は1件、回数は無制限。
+強い探索も最初から実行でき、繰り返し回数を制限しない。呼出し失敗も履歴に残す。
+終了時usageの欠落はunknownとして記録し、後続の受付を妨げない。
 ローカルプロセス終了は遠隔の課金キャンセルを保証しない。観測tool上限も事前課金上限ではない。
-2回/タスクは本キットの同一STATE使用経路の制限。直接agyや別STATEまで規制するものではない。
+旧STATEに保存された回数・token上限も受付条件として使わない。
 
 ## Hooksとの役割分担
 

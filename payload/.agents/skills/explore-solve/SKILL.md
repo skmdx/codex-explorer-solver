@@ -27,7 +27,7 @@ multi-project workspace root. Create temporary task/state/output directories und
   Use one AGY reader only when the source volume warrants delegation: `--mode reader`,
   explicit repeated `--path`. The script bundles source; do not paste whole files
   into your context before sending them to the worker.
-- Unknown edit location: one AGY explorer; use narrow `--scope DIR` when justified.
+- Unknown edit location: use an AGY explorer; narrow `--scope DIR` when justified.
   Export is Git-tracked current worktree UTF-8 source by default. Use
   `--include-untracked` only when needed and authorized. Secrets/configurations,
   binary files, submodules, and large files may be excluded. Do not claim the
@@ -35,19 +35,19 @@ multi-project workspace root. Create temporary task/state/output directories und
 
 ## AGY delegation
 
-Use ONE external per-task budget state for every worker in this task. Reuse a
+Use one external per-task usage state for every worker in this task. Reuse a
 provided state. Otherwise write a concise task/anchors/acceptance-criteria file in
 an authorized private directory outside the repository and initialize once:
-`python3 "$ES/budget.py" init --repo . --task-file TASK --state-dir STATE --max-calls 2`
+`python3 "$ES/budget.py" init --repo . --task-file TASK --state-dir STATE`
 Then invoke, using a fresh output directory outside the repository for each run:
 `python3 "$ES/locate.py" --repo . --task-file TASK --state-dir STATE --out-dir RUN`
 For Reader add `--mode reader --path FILE` (repeat paths). For additional localized
 investigation add `--deep`; provide only the missing relationship and prior
 candidates, not your full transcript. The existing state accepts focused follow-up
-question text; do not initialize another state to work around a limit.
+question text while retaining the task's cumulative usage history.
 
-At most one active worker; two invocations per task, failures included. One may
-be --deep (same Gemini 3.8 Flash, High). Initial explorer/reader use Medium. Do not
+Worker invocations are unlimited, including --deep (Gemini 3.8 Flash, High).
+At most one worker is active at a time. Normal explorer/reader use Medium. Do not
 silently override the model, resume an AGY conversation, widen permissions, or
 install dependencies to get around an environment error. No automatic retries.
 Read only handoff.json and concise metrics on failure, NOT events.jsonl,
@@ -56,7 +56,8 @@ request.jsonl, result.json, or the exported workspace wholesale.
 The runner uses a disposable export and a restricted AGY MAIN-agent definition,
 not a native Codex child. Native Codex Hooks do not observe AGY's internal tools;
 the wrapper validates AGY init, final structured output, original source hashes,
-and the shared budget. Local deadlines/call counts are not hard token/cost caps.
+and records usage in the shared state. Unknown usage remains unknown without
+blocking later calls. Local deadlines/tool counts are not hard token/cost caps.
 Do not infer usage or safety from an unverified runner or a missing terminal result.
 
 ## Verify and implement
@@ -73,8 +74,7 @@ another-model escalation. A partial answer can be sufficient to start work.
 Use --deep only when actual evidence falsifies the chosen subsystem or a required
 relationship is unresolved. Not for a missing test alone, syntax/type/assertion
 errors introduced by a patch, malformed JSON, auth/permissions errors, unavailable
-models, or quota exhaustion. After the budget is exhausted, investigate directly
-as parent or report the concrete blocker. Only you edit and approve changes.
+models, or quota exhaustion. Only you edit and approve changes.
 
 ## Preserve test evidence
 

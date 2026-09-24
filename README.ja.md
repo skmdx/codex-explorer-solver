@@ -45,7 +45,7 @@ Codex parent (Solver; native subagents disabled)
 |---|---|---|
 | 初期Explorer | `gemini-3.8-flash-medium` | 修正場所が不明なときだけ |
 | Reader | `gemini-3.8-flash-medium` | 既知のファイルへの限定した事実質問 |
-| 追加Explorer | `gemini-3.8-flash-high` | 同じモデル系列。既存の予算枠内で最大1回 |
+| 追加Explorer | `gemini-3.8-flash-high` | 同じモデル系列。回数制限なし |
 | 親Solver | 既存のCodex選択 | 本キットは変更しない |
 
 これは `agy --agent` で制限付きの**メインエージェント**を起動する方式です。
@@ -126,8 +126,8 @@ $explore-solve
 受け入れ条件: ……
 ```
 
-スキルは必要時だけ `locate.py` を起動し、二回までの共通予算を作成・再利用する
-指示を持ちます。既に予算STATEや検証済みhandoffがある場合は、それを渡してください。
+スキルは必要時だけ `locate.py` を起動し、共通の使用量記録を作成・再利用する
+指示を持ちます。既にSTATEや検証済みhandoffがある場合は、それを渡してください。
 既知の修正場所、単純な固定文字列検索ではAGYを呼びません。
 
 ## 5. 手動で探索を実行する
@@ -145,7 +145,7 @@ cat > "$RUN/task.txt" <<'TASK'
 TASK
 
 python3 .codex/es/budget.py init --repo "$PWD" \
-  --task-file "$RUN/task.txt" --state-dir "$RUN/budget" --max-calls 2
+  --task-file "$RUN/task.txt" --state-dir "$RUN/budget"
 
 python3 .codex/es/locate.py --repo "$PWD" \
   --task-file "$RUN/task.txt" --state-dir "$RUN/budget" \
@@ -206,8 +206,9 @@ Geminiにはhashを作らせません。返却時にホストが**実行前に�
 - structured_outputだけを受け取り、コードブロック・説明文からJSONを「救済」しません。
   schema逸脱、未知のevent、複数result、古い原文、不正な行参照などはエラーにします。
 - 認証・モデル未提供・権限・quotaの失敗で自動的にモデル変更・再実行しません。
-- 同じSTATEのworker開始受付は原則2回、同時1件、追加探索1件。失敗も数えます。
-  usageが不明なら0とせず、次のworker受付を既定で止めます。
+- 同じSTATEで回数無制限、同時1件。追加探索にも回数上限はありません。
+  失敗も記録し、usageが不明なら0とせず不明のまま後続実行を受け付けます。
+  `--max-calls`、`--soft-token-limit`、`--allow-unknown-usage`は廃止しました。
 - 局所deadline・log上限・観測tool回数監視は強制課金上限ではありません。
   超過したtool eventが通知された時点でその呼出しはすでに始まっている場合があります。
   プロセス停止後も処理済みの費用は取り消されません。

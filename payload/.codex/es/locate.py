@@ -2,7 +2,7 @@
 """One bounded AGY/Gemini 3.8 Flash worker; Codex stays the parent solver.
 
 Linux/macOS/WSL, Python 3.11+. Private source export, structured evidence,
-persistent admission budget. No Codex subprocesses or native subagent spawns.
+persistent usage ledger. No Codex subprocesses or native subagent spawns.
 """
 from __future__ import annotations
 import argparse
@@ -102,14 +102,15 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
     definition = agy.agent_definition(HERE/'agy_agents'/f'{agent}.md', agent, tools)
     schema = HERE/'agy-handoff.schema.json'
     if not schema.is_file(): raise EvidenceError('agy-handoff.schema.json is missing')
-    # A required existing budget is validated before exporting source or launching AGY.
+    # Validate the existing task ledger before exporting source or launching AGY.
     budget.status(args.state_dir)
     out.mkdir(mode=0o700, parents=True, exist_ok=False); os.chmod(out,0o700)
     metadata: dict[str,Any] = dict(format_version=4, backend='agy', provider='antigravity_cli',
         created_at=datetime.now(timezone.utc).isoformat(), requested_model=model,
         role=role, worker_mode=args.mode, agy_version=pre['agy_version'],
         task_sha256=hashlib.sha256(raw_task).hexdigest(), repo=str(root),
-        task_budget_enforced=True, status='preparing', usage=None, usage_complete=False,
+        task_usage_recorded=True, single_worker_enforced=True,
+        status='preparing', usage=None, usage_complete=False,
         billing_cost=None, parent_usage_included=False, os_readonly_sandbox=False,
         global_agy_configuration_modified=False, conversation_resumed=False,
         timeout_seconds=args.timeout)
@@ -198,7 +199,7 @@ def main() -> int:
     parser.add_argument('--repo',type=Path,default=Path.cwd())
     parser.add_argument('--task-file',type=Path)
     parser.add_argument('--out-dir',type=Path)
-    parser.add_argument('--state-dir',type=Path,help='required existing per-task budget for all model calls')
+    parser.add_argument('--state-dir',type=Path,help='required existing per-task usage ledger for all model calls')
     parser.add_argument('--mode',choices=['localize','reader'],default='localize')
     parser.add_argument('--path',action='append',default=[],help='reader input file, repeatable')
     parser.add_argument('--scope',action='append',default=[],help='localize export file/directory, repeatable')

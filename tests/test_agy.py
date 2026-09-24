@@ -150,11 +150,11 @@ class AgyRunnerTests(Fixture):
     def test_usage_keeps_provider_cache_semantics(self):
         r=self.invoke('large_cache');self.assertEqual(r.returncode,0,r.stdout)
         self.assertEqual(self.metrics()['usage']['cache_read_tokens'],1000)
-    def test_unknown_usage_blocks_second_invocation(self):
+    def test_unknown_usage_does_not_block_second_invocation(self):
         r=self.invoke('no_usage');self.assertEqual(r.returncode,0,r.stdout)
         self.assertFalse(self.metrics()['usage_complete'])
-        second=self.invoke(out='run2');self.assertNotEqual(second.returncode,0)
-        self.assertEqual(self.metrics('run2')['status'],'budget_refused')
+        second=self.invoke(out='run2');self.assertEqual(second.returncode,0,second.stdout)
+        self.assertIsNone(budget.status(self.state)['total_worker_tokens'])
     def test_boolean_usage_is_unknown_not_one(self):
         self.invoke('bad_usage');self.assertIsNone(self.metrics()['usage']['input_tokens'])
     def test_partial_is_accepted_not_retried(self):
@@ -226,16 +226,21 @@ class AgyRunnerTests(Fixture):
         self.assertNotEqual(r.returncode,0);self.assertIn('snapshot_modified',self.metrics()['error'])
     def test_concurrent_original_change_rejected(self):
         r=self.invoke('original_changed');self.assertNotEqual(r.returncode,0);self.assertIn('stale_source_corpus',self.metrics()['error'])
-    def test_deep_requires_previous_attempt(self):
-        r=self.invoke(extra=['--deep']);self.assertNotEqual(r.returncode,0);self.assertEqual(self.metrics()['status'],'budget_refused')
+    def test_deep_can_run_first_and_repeat(self):
+        for i in range(3):
+            r=self.invoke(extra=['--deep'],out=f'deep{i}')
+            self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        self.assertEqual(budget.status(self.state)['attempts'],3)
     def test_deep_same_flash_family_high(self):
         self.assertEqual(self.invoke().returncode,0)
         r=self.invoke(extra=['--deep'],out='deep');self.assertEqual(r.returncode,0,r.stdout+r.stderr)
         self.assertEqual(self.metrics('deep')['requested_model'],'gemini-3.8-flash-high')
         self.assertEqual(budget.status(self.state)['attempts'],2)
-    def test_two_calls_exhaust_budget(self):
-        self.invoke();self.invoke(out='run2');r=self.invoke(out='run3');self.assertNotEqual(r.returncode,0)
-        self.assertEqual(budget.status(self.state)['attempts'],2)
+    def test_more_than_two_calls_succeed(self):
+        for i in range(4):
+            r=self.invoke(out=f'run{i}');self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        self.assertEqual(budget.status(self.state)['attempts'],4)
+        self.assertEqual(budget.status(self.state)['total_worker_tokens'],520)
     def test_no_implicit_codex_fallback_when_agy_missing(self):
         r=self.invoke(extra=['--agy','/not-installed/agy']);self.assertNotEqual(r.returncode,0)
         self.assertEqual(budget.status(self.state)['attempts'],0);self.assertIn('no Codex fallback',r.stderr)
