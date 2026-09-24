@@ -43,7 +43,7 @@ Codex parent (Solver; native subagents disabled)
 
 | 役割 | AGY slug | 補足 |
 |---|---|---|
-| 初期Explorer | `gemini-3.8-flash-medium` | 修正場所が不明なときだけ |
+| 初期Explorer | `gemini-3.8-flash-medium` | 独立した広範囲の調査、または明示された委譲 |
 | Reader | `gemini-3.8-flash-medium` | 既知のファイルへの限定した事実質問 |
 | 追加Explorer | `gemini-3.8-flash-high` | 同じモデル系列。回数制限なし |
 | 親Solver | 既存のCodex選択 | 本キットは変更しない |
@@ -128,7 +128,8 @@ $explore-solve
 
 スキルは必要時だけ `locate.py` を起動し、共通の使用量記録を作成・再利用する
 指示を持ちます。既にSTATEや検証済みhandoffがある場合は、それを渡してください。
-既知の修正場所、単純な固定文字列検索ではAGYを呼びません。
+通常はローカルで検索して原文を確認します。場所が不明という理由だけで委譲せず、
+親が大量の原文を読む代わりになる独立した調査、または明示された委譲にAGYを使います。
 
 ## 5. 手動で探索を実行する
 
@@ -136,15 +137,12 @@ $explore-solve
 消去されない私有ディレクトリを指定し、同じSTATEに使用量の履歴をまとめてください。
 
 ```bash
-RUN="$(mktemp -d "${TMPDIR:-/tmp}/codex-es-agy.XXXXXX")"
+RUN="$(mktemp -d /home/user/codex-work/tmp/codex-es-agy.XXXXXX)"
 
 cat > "$RUN/task.txt" <<'TASK'
 対象の不具合と受け入れ条件をここに記述してください。
 探索に必要な手掛かりだけを書き、親の会話履歴や秘密情報は入れません。
 TASK
-
-python3 .codex/es/budget.py init --repo "$PWD" \
-  --task-file "$RUN/task.txt" --state-dir "$RUN/budget"
 
 python3 .codex/es/locate.py --repo "$PWD" \
   --task-file "$RUN/task.txt" --state-dir "$RUN/budget" \
@@ -159,7 +157,9 @@ Readerは上記の実行コマンドに `--mode reader --path src/example.py` �
 `--deep` は同じSTATEを使うHighでの探索です。先行workerは不要で、回数制限はありません。
 追加探索の質問は、元課題の全文を繰り返すのではなく、未解決の関係と候補に絞れます。
 
-返却は小さなJSONで、検証済みの `handoff_path` と `metrics_path` を含みます。
+STATEは初回実行で作成され、以後は同じ使用量記録を再利用します。
+返却JSONは `handoff_path` と `metrics_path` に加え、全引用範囲をハッシュ検証した
+行番号付き原文を `evidence` に含みます。その場で読む場合、原文の再取得は不要です。
 親へ `events.jsonl` や `request.jsonl` の全文を渡してはいけません。
 
 ```bash
@@ -168,10 +168,14 @@ python3 .codex/es/evidence.py show --root . \
 python3 .codex/es/budget.py status --state-dir "$RUN/budget"
 ```
 
-Codexには課題とhandoffのパスを渡し、「初期探索を重複せず原文を確認して実装」と
+保存済みの結果を再利用する場合、Codexには課題とhandoffのパスを渡し、「初期探索を重複せず原文を確認して実装」と
 依頼します。行範囲は索引であり編集範囲の制限ではありません。
 `show`は全参照を検証して行番号付き原文も返します。同じファイルは一度だけ読み込みます。
-合計16,000 bytesを超える場合は切り詰めずエラーとし、`check`と必要範囲の`read`を使います。
+原文を合計サイズで拒否・切り詰める処理はありません。
+
+AGYの完了待ちはスキルのcode-mode例に従い、一つのセル内で処理します。
+シェルセッションの待機更新は実行側で行い、空の状態確認をモデルへ返しません。
+セル自体がホストの待機期限で返された場合は、そのセルの待機を継続します。
 
 大量のコマンド出力には`capture.py`を使います。正常終了時は各ログ末尾最大256 bytesと
 終了コード・ログ位置を返し、異常終了時は各末尾最大1,536 bytesと終了理由を返します。

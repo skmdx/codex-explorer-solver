@@ -223,8 +223,6 @@ def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = F
             result[category] = excerpts
     if include_source:
         result.update(stop_reason=data["stop_reason"], unresolved=data["unresolved"])
-        if len(compact_json(result).encode("utf-8")) > MAX_READ_BYTES:
-            raise EvidenceError(f"combined source exceeds {MAX_READ_BYTES} bytes; use check and read selected ranges")
     return result
 
 

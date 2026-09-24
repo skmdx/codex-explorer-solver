@@ -67,14 +67,16 @@ class EvidenceTests(unittest.TestCase):
         r=self.show();self.assertEqual(r.returncode,2)
         self.assertEqual(r.stdout,'');self.assertIn('stale_source',r.stderr)
 
-    def test_show_combined_size_is_bounded_without_truncation(self):
+    def test_show_returns_all_verified_ranges_without_combined_size_refusal(self):
         raw=('x'*9000+'\n'+'y'*9000+'\n').encode()
         (self.root/'src/router.py').write_bytes(raw)
         self.site.update(start=1,end=1,sha256=hashlib.sha256(raw).hexdigest())
         self.data['related']=[dict(self.site,start=2,end=2)]
         self.assertTrue(verify_handoff(self.root,self.data)['ok'])
-        r=self.show();self.assertEqual(r.returncode,2)
-        self.assertEqual(r.stdout,'');self.assertIn('combined source exceeds',r.stderr)
+        r=self.show();self.assertEqual(r.returncode,0,r.stderr)
+        report=json.loads(r.stdout)
+        self.assertEqual(report['primary'][0]['source'],'1: '+'x'*9000)
+        self.assertEqual(report['related'][0]['source'],'2: '+'y'*9000)
 
     def test_stale_same_head(self):
         (self.root / 'src/router.py').write_bytes(self.raw + b'# uncommitted change\n')

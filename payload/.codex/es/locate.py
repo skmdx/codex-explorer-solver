@@ -80,8 +80,8 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
     definition = (HERE/'agy_agents'/f'{agent}.md').read_text(encoding='utf-8')
     schema = HERE/'agy-handoff.schema.json'
     if not schema.is_file(): raise EvidenceError('agy-handoff.schema.json is missing')
-    # Validate the existing task ledger before exporting source or launching AGY.
-    budget.status(args.state_dir)
+    if not args.state_dir.exists():
+        budget.initialize(args.state_dir,root,raw_task)
     out.mkdir(mode=0o700, parents=True, exist_ok=False); os.chmod(out,0o700)
     metadata: dict[str,Any] = dict(format_version=4, backend='agy', provider='antigravity_cli',
         created_at=datetime.now(timezone.utc).isoformat(), requested_model=model,
@@ -92,7 +92,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         billing_cost=None, parent_usage_included=False, os_readonly_sandbox=False,
         global_agy_configuration_modified=False, conversation_resumed=False,
         timeout_seconds=args.timeout)
-    code = 1; job = None; stream_state = agy.StreamState(model,agent,tools)
+    code = 1; job = None; evidence = None; stream_state = agy.StreamState(model,agent,tools)
     try:
         write_private(out/'task.txt', raw_task)
         manifest = snapshot.export(root, out/'workspace', mode=args.mode, paths=args.path,
@@ -150,7 +150,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             write_private(out/'raw-handoff.json',compact_json(wire)+'\n')
             snapshot.verify_export(root,out/'workspace',manifest)
             data = snapshot.bind_handoff(wire,manifest)
-            verify_handoff(root,data)
+            evidence = verify_handoff(root,data,include_source=True)
             write_private(out/'handoff.json',compact_json(data)+'\n')
             metadata.update(status='validated',handoff_status=data['status'],
                             handoff_bytes=len(compact_json(data).encode('utf-8')))
@@ -167,6 +167,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                 metadata['budget_finalization_error']=str(exc)
         write_private(out/'metrics.json',json.dumps(metadata,ensure_ascii=False,indent=2)+'\n')
     return dict(ok=code==0,status=metadata['status'],handoff_status=metadata.get('handoff_status'),
+                evidence=evidence if code==0 else None,
                 handoff_path=str(out/'handoff.json') if code==0 else None,
                 metrics_path=str(out/'metrics.json'),usage_complete=metadata['usage_complete'],
                 backend='agy',requested_model=model,budget_job_id=job), code
@@ -177,7 +178,7 @@ def main() -> int:
     parser.add_argument('--repo',type=Path,default=Path.cwd())
     parser.add_argument('--task-file',type=Path)
     parser.add_argument('--out-dir',type=Path)
-    parser.add_argument('--state-dir',type=Path,help='required existing per-task usage ledger for all model calls')
+    parser.add_argument('--state-dir',type=Path,help='per-task usage ledger; created on first invocation, reused thereafter')
     parser.add_argument('--mode',choices=['localize','reader'],default='localize')
     parser.add_argument('--path',action='append',default=[],help='reader input file, repeatable')
     parser.add_argument('--scope',action='append',default=[],help='localize export file/directory, repeatable')

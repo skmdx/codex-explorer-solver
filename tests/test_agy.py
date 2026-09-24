@@ -138,10 +138,19 @@ class AgyRunnerTests(Fixture):
         m=self.metrics();self.assertEqual(m['backend'],'agy');self.assertEqual(m['requested_model'],'gemini-3.8-flash-medium')
         self.assertNotIn('codex',m['argv']);self.assertFalse((self.repo/'.codex/agents').exists())
         h=json.loads((self.base/'run/handoff.json').read_text());self.assertEqual(h['primary'][0]['sha256'],hashlib.sha256((self.repo/'src/example.py').read_bytes()).hexdigest())
-    def test_reader_source_not_in_parent_stdout_or_argv(self):
+    def test_reader_returns_verified_citations_without_source_in_argv(self):
         r=self.invoke(extra=['--mode','reader','--path','src/example.py']);self.assertEqual(r.returncode,0,r.stderr+r.stdout)
-        self.assertNotIn('return 1',r.stdout);self.assertNotIn('return 1',json.dumps(self.metrics()['argv']))
+        evidence=json.loads(r.stdout)['evidence']
+        self.assertEqual(evidence['primary'][0]['source'],'1: def f():\n2:     return 1')
+        self.assertFalse(evidence['semantic_relevance_verified'])
+        self.assertNotIn('return 1',json.dumps(self.metrics()['argv']))
         self.assertIn('return 1',(self.base/'run/request.jsonl').read_text())
+    def test_initializes_and_reuses_task_ledger(self):
+        shutil.rmtree(self.state)
+        for out in ('first','second'):
+            r=self.invoke(out=out);self.assertEqual(r.returncode,0,r.stderr+r.stdout)
+        self.assertEqual(budget.status(self.state)['attempts'],2)
+        self.assertEqual(budget.status(self.state)['total_worker_tokens'],260)
     def test_cumulative_usage_not_double_counted(self):
         self.invoke();m=self.metrics();self.assertEqual(m['usage']['total_tokens'],130)
         self.assertEqual(budget.status(self.state)['total_worker_tokens'],130)
@@ -227,6 +236,7 @@ class AgyRunnerTests(Fixture):
         self.assertNotEqual(r.returncode,0);self.assertIn('snapshot_modified',self.metrics()['error'])
     def test_concurrent_original_change_rejected(self):
         r=self.invoke('original_changed');self.assertNotEqual(r.returncode,0);self.assertIn('stale_source_corpus',self.metrics()['error'])
+        self.assertIsNone(json.loads(r.stdout)['evidence'])
     def test_deep_can_run_first_and_repeat(self):
         for i in range(3):
             r=self.invoke(extra=['--deep'],out=f'deep{i}')
