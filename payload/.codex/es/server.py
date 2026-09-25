@@ -27,7 +27,8 @@ def catalog(run: Path) -> dict:
     report = json.loads((run/'report.json').read_text())
     result = {k: report[k] for k in ('status', 'error', 'handoff_status', 'usage')}
     result['effective_model'] = report.get('effective_model')
-    result['attempts'] = [{k:a[k] for k in ('model','error')} for a in report.get('attempts',[])]
+    result['skipped_models'] = report.get('skipped_models',[])
+    result['attempts'] = [{k:a.get(k) for k in ('model','error','elapsed_seconds')} for a in report.get('attempts',[])]
     result['run_dir'] = str(run)
     evidence = report.get('evidence')
     result['locations'] = []

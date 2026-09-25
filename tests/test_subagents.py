@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -26,7 +27,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         self.source = self.repo/'file.txt'
         self.source.write_text('original\n')
         self.config = patch.dict(subagents.CONFIG, executable=str(KIT/'tests/fixtures/fake_agy.py'))
-        self.env = patch.dict(os.environ, FAKE_CASE='ok', FAKE_ORIGINAL_FILE=str(self.source))
+        self.env = patch.dict(os.environ, FAKE_CASE='ok', FAKE_ORIGINAL_FILE=str(self.source),XDG_CACHE_HOME=str(self.root/'cache'))
         self.config.start(); self.env.start()
 
     def tearDown(self):
@@ -132,6 +133,28 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'],'completed',result)
         self.assertEqual(result['model'],pro)
         self.assertEqual(len(result['attempts']),2)
+
+    async def test_native_quota_switches_and_next_request_skips_model(self):
+        opus, pro, _ = subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'native_quota',pro:'inherited_interruption'})
+        started=time.monotonic()
+        result=await self.run_task(model=opus)
+        self.assertLess(time.monotonic()-started,5)
+        self.assertEqual(result['status'],'completed',result)
+        self.assertEqual(result['model'],pro)
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'native_quota'})
+        result=await self.run_task(model=opus)
+        self.assertEqual([a['model'] for a in result['attempts']],[pro])
+        self.assertEqual(result['skipped_models'][0]['model'],opus)
+
+    async def test_all_cached_models_return_without_process(self):
+        for model in subagents.CONFIG['review_model_order']:
+            subagents.agy.remember_quota(model,'Individual quota reached. Resets in 1h.')
+        result=await self.run_task(model=subagents.CONFIG['review_model_order'][0])
+        self.assertEqual(result['status'],'failed')
+        self.assertEqual(result['attempts'],[])
+        self.assertEqual(len(result['skipped_models']),3)
+        self.assertFalse(list(Path(result['run_dir']).glob('attempt-*')))
 
     async def test_startup_unavailability_starts_next_model_with_original_task(self):
         opus, pro, _ = subagents.CONFIG['review_model_order']

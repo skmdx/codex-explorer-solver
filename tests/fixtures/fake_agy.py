@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """TEST DOUBLE ONLY. Does not contact Google or implement model reasoning."""
-import json, os, pathlib, sys, time
+import json, os, pathlib, signal, sys, time
 args=sys.argv[1:]
 if '--help' in args:
     print('--input-format --output-format --json-schema --model --agent --add-dir --print-timeout');sys.exit(0)
@@ -22,9 +22,10 @@ message=json.loads(lines[0]);assert message['event']=='user'
 text=message['message']['content'];case=os.getenv('FAKE_CASE','ok')
 case=json.loads(os.getenv('FAKE_MODEL_CASES','{}')).get(model,case)
 def emit(value):
-    if case=='inherited_quota' and value.get('event')=='result':
+    if case in ('inherited_quota','inherited_interruption') and value.get('event')=='result':
         print(json.dumps({'event':'step_update','step_update':{'step_type':'finish','state':'DONE','step_index':100}}),flush=True)
-        value['result'].update(status='ERROR',error='Individual quota reached. Resets later.')
+        value['result'].update(status='ERROR',error='Individual quota reached. Resets later.' if case=='inherited_quota'
+                               else 'The stream was interrupted. Please continue the task you were working on.')
     print(json.dumps(value),flush=True)
 if case=='model_unavailable':
     emit({'event':'result','result':{'status':'ERROR','error':'Unknown model','num_turns':0}});sys.exit(1)
@@ -36,6 +37,15 @@ if case=='bad_agent':agent='self'
 init={'event':'init','conversation_id':'fixture-1','init':{'cwd':os.getcwd(),'model':model,'agent':agent,'tools':tools,'permission_mode':'request-review'}}
 if case=='bypass':init['init']['permission_mode']='always-proceed'
 if case!='no_init':emit(init)
+if case=='native_quota':
+    def interrupted(*_):
+        emit({'event':'result','result':{'conversation_id':'fixture-1','status':'ERROR','num_turns':1,
+              'error':'The stream was interrupted. Please continue the task you were working on.'}})
+        sys.exit(0)
+    signal.signal(signal.SIGTERM,interrupted)
+    pathlib.Path(args[args.index('--log-file')+1]).write_text(
+        'Run: attempt 1 failed (RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 2h3m4s.), retrying in 4s\n')
+    time.sleep(10)
 if case=='timeout':
     if os.getenv('FAKE_PID_FILE'):pathlib.Path(os.environ['FAKE_PID_FILE']).write_text(str(os.getpid()))
     time.sleep(10)

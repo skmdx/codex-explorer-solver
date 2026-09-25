@@ -147,12 +147,18 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                         reader_source_bytes_sent=manifest['total_bytes'] if args.mode=='reader' else None)
         order = config['collection_model_order']
         candidates = order[order.index(model):] if model in order else [model]
+        candidates, metadata['skipped_models'] = agy.available_models(candidates)
         started = time.monotonic()
         timeout = args.timeout if args.timeout is not None else config['timeout_seconds']
         deadline = started + timeout
         attempts = []
         process_code = 124
+        reason = None; argv = []; attempt_out = out
         conversation_id = None
+        previous_error = None
+        if not candidates:
+            reason = 'quota_exhausted'
+            stream_state.quota_error = '; '.join(x['model']+': '+x['error'] for x in metadata['skipped_models'])
         for index, candidate in enumerate(candidates):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -170,16 +176,17 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             metadata['argv'] = argv
             metadata['status'] = 'running'
             stream_state = agy.StreamState(candidate, agent, tools)
-            process_code, reason, _ = agy.supervise(argv,out/'workspace',attempt_out,remaining,stream_state)
-            stream_state.recover_inherited_error(
-                attempts[-1]['error'] if conversation_id and attempts else None, process_code)
+            process_code, reason, attempt_elapsed = agy.supervise(argv,out/'workspace',attempt_out,remaining,stream_state)
+            stream_state.recover_inherited_error(previous_error if conversation_id else None, process_code)
             conversation_id = stream_state.conversation_id or conversation_id
             result = stream_state.result or {}
-            error = result.get('error') or (attempt_out/'stderr.log').read_text(errors='replace')
-            attempts.append(dict(model=candidate,conversation_id=conversation_id,error=result.get('error'),
-                                 usage=stream_state.usage(),run_dir=str(attempt_out)))
+            previous_error = result.get('error')
+            error = stream_state.quota_error or result.get('error') or ((attempt_out/'stderr.log').read_text(errors='replace') if not result else '')
+            agy.remember_quota(candidate,error)
+            attempts.append(dict(model=candidate,conversation_id=conversation_id,error=error or None,
+                                 usage=stream_state.usage(),run_dir=str(attempt_out),elapsed_seconds=round(attempt_elapsed,3)))
             quota = re.search(r'quota|resource_exhausted|usage limit|rate limit', str(error), re.IGNORECASE)
-            if reason or stream_state.error or result.get('status') == 'SUCCESS' or not quota:
+            if (reason and reason != 'quota_exhausted') or stream_state.error or result.get('status') == 'SUCCESS' or not quota:
                 break
         elapsed = time.monotonic() - started
         metadata.update(attempts=attempts, conversation_resumed=len(attempts)>1 and '--conversation' in argv)
@@ -195,8 +202,9 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         latest = {a['conversation_id'] or a['run_dir']: a['usage'] for a in attempts}
         metadata['usage'] = stream_state.usage()
         if len(latest) > 1:
-            metadata['usage'] = {key: sum(u[key] for u in latest.values()) if all(u[key] is not None for u in latest.values()) else None for key in agy.USAGE_KEYS}
-            metadata['usage'].update(source='latest_conversation_results.usage',provider='antigravity_cli',usage_complete=all(u['usage_complete'] for u in latest.values()))
+            usage: dict = {key: sum(u[key] for u in latest.values()) if all(u[key] is not None for u in latest.values()) else None for key in agy.USAGE_KEYS}
+            usage.update(source='latest_conversation_results.usage',provider='antigravity_cli',usage_complete=all(u['usage_complete'] for u in latest.values()))
+            metadata['usage'] = usage
         metadata['usage_complete'] = bool(metadata['usage']['usage_complete'] and not reason)
         if result:
             write_private(out/'result.json',compact_json(result)+'\n')
@@ -204,7 +212,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             metadata['provider_turns'] = result.get('num_turns')
         if reason:
             metadata['status'] = reason
-            metadata['error'] = stream_state.error or reason
+            metadata['error'] = stream_state.error or stream_state.quota_error or reason
             code = 124 if reason == 'local_deadline' else 1
         elif process_code != 0 or not result or result.get('status') != 'SUCCESS':
             metadata['status'] = 'agy_failed'
@@ -242,7 +250,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                 evidence=evidence, error=metadata.get('error'), scope=scope,
                 handoff_path=handoff_path, usage=metadata['usage'],
                 metrics_path=str(out/'metrics.json'),usage_complete=metadata['usage_complete'],
-                backend='agy',requested_model=model,effective_model=metadata.get('effective_model'),attempts=metadata.get('attempts',[]),budget_job_id=job,
+                backend='agy',requested_model=model,effective_model=metadata.get('effective_model'),attempts=metadata.get('attempts',[]),skipped_models=metadata.get('skipped_models',[]),budget_job_id=job,
                 report_path=str(out/'report.txt'))
     write_private(out/'report.json', compact_json(report)+'\n')
     write_private(out/'report.txt', format_report(report)+'\n')

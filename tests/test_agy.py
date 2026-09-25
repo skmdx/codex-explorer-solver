@@ -1,5 +1,5 @@
 from __future__ import annotations
-import copy, hashlib, json, os, shutil, subprocess, sys, tempfile, tomllib, unittest
+import copy, hashlib, json, os, shutil, subprocess, sys, tempfile, time, tomllib, unittest
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -25,6 +25,7 @@ class Fixture(unittest.TestCase):
     def tearDown(self):self.tmp.cleanup()
     def invoke(self,case='ok',extra=None,out='run',json_output=True):
         env=os.environ.copy();env['FAKE_CASE']=case;env['FAKE_ORIGINAL_FILE']=str(self.repo/'src/example.py')
+        env['XDG_CACHE_HOME']=str(self.base/'cache')
         cmd=[sys.executable,str(KIT/'payload/.codex/es/locate.py'),'--repo',str(self.repo),
              '--task-file',str(self.task),'--state-dir',str(self.state),'--out-dir',str(self.base/out),'--agy',str(FAKE)]
         if json_output: cmd.append('--json')
@@ -493,6 +494,53 @@ if __name__=='__main__':unittest.main()
 
 
 class CollectionFallbackTests(Fixture):
+    def test_native_quota_switches_before_retry_and_skips_until_reset(self):
+        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'native_quota','gemini-3.8-flash-high':'inherited_interruption'})}):
+            start=time.monotonic(); proc=self.invoke()
+            self.assertLess(time.monotonic()-start,5)
+            self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+            report=json.loads(proc.stdout)
+            self.assertEqual(len(report['attempts']),2)
+            self.assertIn('Resets in',report['attempts'][0]['error'])
+            os.environ['FAKE_MODEL_CASES']=json.dumps({'claude-sonnet-4-6':'native_quota'})
+            proc=self.invoke(out='again')
+            self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+            report=json.loads(proc.stdout)
+            self.assertEqual([a['model'] for a in report['attempts']],['gemini-3.8-flash-high'])
+            self.assertEqual(report['skipped_models'][0]['model'],'claude-sonnet-4-6')
+
+    def test_quota_cache_expires_and_transient_rate_limit_is_not_cached(self):
+        with patch.dict(os.environ, XDG_CACHE_HOME=str(self.base/'cache')):
+            backend.remember_quota('model','Rate limit exceeded, retry later')
+            self.assertEqual(backend.available_models(['model']),(['model'],[]))
+            with patch.object(backend.time,'time',return_value=100):
+                backend.remember_quota('model','Individual quota reached. Resets in 2s.')
+            with patch.object(backend.time,'time',return_value=101):
+                self.assertEqual(backend.available_models(['model'])[0],[])
+            with patch.object(backend.time,'time',return_value=103):
+                self.assertEqual(backend.available_models(['model']),(['model'],[]))
+
+    def test_all_models_cached_returns_without_launch(self):
+        with patch.dict(os.environ, XDG_CACHE_HOME=str(self.base/'cache')):
+            for model in self.cfg['collection_model_order']:
+                backend.remember_quota(model,'Individual quota reached. Resets in 1h.')
+        proc=self.invoke()
+        report=json.loads(proc.stdout)
+        self.assertEqual(report['status'],'quota_exhausted')
+        self.assertEqual(report['attempts'],[])
+        self.assertFalse((self.base/'run/events.jsonl').exists())
+
+    def test_native_log_ignores_transient_limits_and_reads_partial_lines(self):
+        log=self.base/'native.log'; reader=backend.QuotaLog(log)
+        self.assertIsNone(reader.read())
+        log.write_text('Run: attempt 1 failed (RESOURCE_EXHAUSTED: rate limit), retrying in 4s\n')
+        self.assertIsNone(reader.read())
+        with log.open('a') as f:f.write('Run: attempt 1 failed (Individual quota reached. Resets in 3h')
+        self.assertIsNone(reader.read())
+        with log.open('a') as f:f.write('2m1s.), retrying in 4s\n')
+        self.assertEqual(reader.read(),'Individual quota reached. Resets in 3h2m1s.')
+        self.assertIsNone(reader.read())
+
     def test_completed_resume_with_inherited_quota_is_validated(self):
         with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({
                 'claude-sonnet-4-6':'quota', 'gemini-3.8-flash-high':'inherited_quota'})}):

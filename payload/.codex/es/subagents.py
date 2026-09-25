@@ -100,6 +100,7 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
     selected_model: str = model or CONFIG['subagent_model']
     order = CONFIG['review_model_order']
     candidates: list[str] = order[order.index(selected_model):] if mode == 'review' and selected_model in order else [selected_model]
+    candidates, skipped_models = agy.available_models(candidates)
     if root:
         task = f'REPOSITORY: {root}\n\n{task}'
     request = json.dumps({'event': 'user', 'message': {'content': task}})+'\n'
@@ -108,7 +109,10 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
     deadline = started + CONFIG['timeout_seconds']
     attempts = []
     conversation_id = None
-    while True:
+    previous_error = None
+    report: dict = dict(status='failed',response='',error='; '.join(x['model']+': '+x['error'] for x in skipped_models),
+                  usage=None,model=selected_model)
+    while candidates:
         candidate = candidates.pop(0)
         remaining = deadline - time.monotonic()
         attempt_dir = out/f'attempt-{len(attempts)+1}'
@@ -119,17 +123,18 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
             if conversation_id else task}})+'\n')
         report = await run_attempt(candidate, mode, agent, root, workspace, attempt_request,
                                    attempt_dir, remaining, conversation_id,
-                                   attempts[-1]['error'] if conversation_id and attempts else None)
+                                   previous_error if conversation_id else None)
         conversation_id = report['conversation_id'] or conversation_id
+        previous_error = report['terminal_error']
         attempts.append({key: report[key] for key in
-                         ('model','status','error','usage','run_dir','conversation_id','resumed_from')})
+                         ('model','status','error','usage','run_dir','conversation_id','resumed_from','elapsed_seconds')})
         if not report['model_unavailable'] or not candidates:
             break
         if time.monotonic() >= deadline:
             report['status'] = 'timeout'
             report['error'] = 'AGY review exhausted the configured deadline'
             break
-    usage: dict = report['usage']
+    usage: dict | None = report['usage']
     if len(attempts) > 1:
         # AGY terminal usage is cumulative across resumed turns of the same conversation.
         latest = {a['conversation_id'] or a['resumed_from'] or a['run_dir']: a['usage'] for a in attempts}
@@ -138,10 +143,10 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
                  for key in agy.USAGE_KEYS}
         usage.update(source='latest_conversation_results.usage', provider='antigravity_cli',
                      usage_complete=all(u['usage_complete'] for u in latest.values()))
-    report.update(run_dir=str(out), attempts=attempts, usage=usage,
+    report.update(run_dir=str(out), attempts=attempts, usage=usage, skipped_models=skipped_models,
                   elapsed_seconds=round(time.monotonic()-started, 3))
     (out/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n')
-    return {key: report[key] for key in ('status', 'response', 'error', 'usage', 'run_dir', 'model', 'attempts')}
+    return {key: report[key] for key in ('status', 'response', 'error', 'usage', 'run_dir', 'model', 'attempts', 'skipped_models')}
 
 
 async def run_attempt(model: str, mode: str, agent: str, root: Path | None, workspace: Path,
@@ -156,27 +161,40 @@ async def run_attempt(model: str, mode: str, agent: str, root: Path | None, work
     if root:
         argv += ['--add-dir', str(root)]
     state = agy.StreamState(model, agent, REVIEW_TOOLS if mode == 'review' else EDIT_TOOLS)
+    quota_log = agy.QuotaLog(out/'native.log')
+    argv += ['--log-file',str(quota_log.path)]
     started = time.monotonic()
     status = 'completed'
     with request_path.open('rb') as stdin, (out/'events.jsonl').open('wb') as stdout, \
             (out/'stderr.log').open('wb') as stderr:
         proc = await asyncio.create_subprocess_exec(*argv, cwd=workspace,
                     stdin=stdin, stdout=stdout, stderr=stderr, start_new_session=True)
+        waiter = asyncio.create_task(proc.wait())
         try:
-            await asyncio.wait_for(proc.wait(), timeout)
+            async with asyncio.timeout(timeout):
+                while not waiter.done():
+                    done,_ = await asyncio.wait({waiter},timeout=0.1)
+                    if done: break
+                    state.quota_error = quota_log.read()
+                    if state.quota_error:
+                        await stop(proc)
+                        break
         except TimeoutError:
             status = 'timeout'
             await stop(proc)
         except asyncio.CancelledError:
             await asyncio.shield(stop(proc))
             raise
+        finally:
+            await waiter
     with (out/'events.jsonl').open('rb') as stream:
         for line in stream:
             state.feed(line)
     state.recover_inherited_error(previous_error, proc.returncode)
     result = state.result or {}
     response = result.get('response', '')
-    error = state.error or result.get('error')
+    error = state.error or state.quota_error or result.get('error')
+    agy.remember_quota(model,state.quota_error or result.get('error') or '')
     stderr_text = (out/'stderr.log').read_text(errors='replace').strip()
     if 'print timeout' in stderr_text:
         status = 'timeout'
@@ -186,10 +204,11 @@ async def run_attempt(model: str, mode: str, agent: str, root: Path | None, work
         status = 'failed'
         error = error or stderr_text or f'AGY exited {proc.returncode}; no successful final response'
     report = dict(status=status, response=response, error=error, usage=state.usage(),
+                  terminal_error=result.get('error'),
                   run_dir=str(out), model=model, mode=mode, argv=argv,
                   conversation_id=state.conversation_id, resumed_from=conversation_id,
                   elapsed_seconds=round(time.monotonic()-started, 3), exit_code=proc.returncode)
-    availability_error = result.get('error') or (stderr_text if not result else '')
+    availability_error = state.quota_error or result.get('error') or (stderr_text if not result else '')
     report['model_unavailable'] = bool(status == 'failed' and not state.error and re.search(
         r'quota|resource_exhausted|unknown model|model[^\n]*(?:unavailable|not available|not found|unsupported)',
         availability_error, re.IGNORECASE))

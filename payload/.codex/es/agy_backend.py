@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
+import sqlite3
 from pathlib import Path
 import signal
 import subprocess
@@ -16,6 +18,54 @@ from typing import Any
 from evidence import EvidenceError, compact_json, _unique_object
 
 USAGE_KEYS = ('input_tokens','output_tokens','thinking_tokens','cache_read_tokens','total_tokens')
+
+
+def quota_seconds(error: str) -> float | None:
+    match = re.search(r'Individual quota reached\.[^\n]*?Resets in ((?:\d+(?:\.\d+)?[hms])+)\.', error)
+    if not match: return None
+    return sum(float(n) * {'h':3600,'m':60,'s':1}[unit]
+               for n,unit in re.findall(r'(\d+(?:\.\d+)?)([hms])',match[1]))
+
+
+def quota_database() -> Path:
+    return Path(os.environ.get('XDG_CACHE_HOME',str(Path.home()/'.cache')))/'codex-explorer-solver/model-quota.sqlite3'
+
+
+def remember_quota(model: str, error: str) -> None:
+    seconds = quota_seconds(error)
+    if seconds is None: return
+    path = quota_database(); path.parent.mkdir(parents=True,exist_ok=True)
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS quota (model TEXT PRIMARY KEY, error TEXT, resets_at REAL)')
+        db.execute('INSERT OR REPLACE INTO quota VALUES (?,?,?)',(model,error,time.time()+seconds))
+
+
+def available_models(models: list[str]) -> tuple[list[str],list[dict]]:
+    path = quota_database()
+    if not path.exists(): return models,[]
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS quota (model TEXT PRIMARY KEY, error TEXT, resets_at REAL)')
+        rows = {row[0]:dict(model=row[0],error=row[1],resets_at=row[2])
+                for row in db.execute('SELECT model,error,resets_at FROM quota WHERE resets_at > ?',(time.time(),))}
+    return [m for m in models if m not in rows],[rows[m] for m in models if m in rows]
+
+
+class QuotaLog:
+    """Watch this process's native retry log, before stream-json reports failure."""
+    def __init__(self, path: Path):
+        self.path = path; self.offset = 0; self.pending = ''
+
+    def read(self) -> str | None:
+        try:
+            with self.path.open() as stream:
+                stream.seek(self.offset); self.pending += stream.read(); self.offset = stream.tell()
+        except FileNotFoundError:
+            return None
+        lines = self.pending.split('\n'); self.pending = lines.pop()
+        for line in lines:
+            if 'Run: attempt ' in line and 'retrying in ' in line and quota_seconds(line) is not None:
+                return line[line.index('Individual quota reached.'):].split('), retrying in ',1)[0]
+        return None
 
 
 def strict_json(raw: str | bytes) -> Any:
@@ -49,6 +99,7 @@ class StreamState:
         self.conversation_id = None; self.permission_mode = None
         self.error: str | None = None
         self.finished = False; self.turn_error = False
+        self.quota_error: str | None = None
 
     def feed(self, raw: bytes) -> None:
         if not raw.strip(): return
@@ -142,6 +193,8 @@ def supervise(argv: list[str], workspace: Path, out: Path, timeout: float | None
     starts. Restricted native agent tools are the primary capability control.
     """
     start = time.monotonic(); reason = None; pending = b''
+    quota_log = QuotaLog(out/'native.log')
+    argv = [*argv,'--log-file',str(quota_log.path)]
     env = os.environ.copy(); env['PYTHONDONTWRITEBYTECODE'] = '1'
     with (out/'request.jsonl').open('rb') as request, (out/'events.jsonl').open('xb') as events, \
             (out/'stderr.log').open('xb') as errors:
@@ -162,6 +215,9 @@ def supervise(argv: list[str], workspace: Path, out: Path, timeout: float | None
                     pump()
                     if state.error:
                         reason = 'protocol_or_capability_error'; stop_process_group(proc); break
+                    state.quota_error = quota_log.read()
+                    if state.quota_error:
+                        reason = 'quota_exhausted'; stop_process_group(proc); break
                     if timeout is not None and time.monotonic()-start >= timeout:
                         reason = 'local_deadline'; stop_process_group(proc); break
                     time.sleep(0.05)
