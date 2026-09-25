@@ -12,15 +12,22 @@ import signal
 import sys
 import tempfile
 import tomllib
+from typing_extensions import TypedDict
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from evidence import evidence_blocks, format_evidence, load_handoff, verify_handoff
+from agy_snapshot import select_paths
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
 mcp = FastMCP("explore-solve")
+
+
+class EvidenceRequest(TypedDict):
+    fact: str
+    scope: list[str]
 
 
 def catalog(run: Path) -> dict:
@@ -48,8 +55,8 @@ def catalog(run: Path) -> dict:
 
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
 async def collect(
-    repo: str, question: str, evidence_needed: list[str], scratch_dir: str,
-    scope: list[str], navigation: dict | None,
+    repo: str, question: str, evidence_needed: list[EvidenceRequest], scratch_dir: str,
+    navigation: dict | None,
     known_findings: str,
     paths: list[str] | None = None, include_untracked: bool = False,
     model: str | None = None,
@@ -60,12 +67,13 @@ async def collect(
     Call this tool directly. The host exposes this namespace as direct-only,
     outside code-mode cells. One call waits for completion without a poll handle.
     The collection deadline is set in agy.toml, not selected per tool call.
-    question is the next Solver decision, evidence_needed names the code facts
-    needed for it (definitions, conditions, updates, callers), not a whole issue.
+    question is the next Solver decision. Each evidence_needed item pairs a fact
+    (definition, condition, caller or test) with its own scope. The harness unions
+    those scopes and rejects unmatched scopes before starting a model.
     Pass known Symbols results directly as navigation={root: LSP workspacePath,
     queries: [{tool, args, result/error}]}. result is the unchanged MCP response,
     including structuredContent. Include prior read_symbols results to reuse read ranges.
-    scope selects repository-relative files/directories or globs (e.g. src/**/*.c).
+    Each scope selects repository-relative files/directories or globs (e.g. src/**/*.c).
     * and ? stay within a path component; ** spans directories. [] selects all.
     Explicit scopes include ignored/untracked files and nested repositories.
     [] or ["."] uses Git's tracked files (plus include_untracked if requested).
@@ -75,7 +83,7 @@ async def collect(
     Use navigation=null only when there is no useful symbol seed. known_findings
     carries relevant prior observations (empty string for a new investigation).
     paths selects Reader input files, including Git hooks and external files;
-    use scope=[], navigation=null and no include_untracked with paths.
+    use empty item scopes, navigation=null and no include_untracked with paths.
     With no scope filter, include_untracked adds non-ignored untracked files.
     model overrides the configured model.
     Encodings are detected per file; encodings={path: codec} corrects known mistakes.
@@ -86,12 +94,25 @@ async def collect(
         raise ValueError('scratch_dir must be outside repo')
     if not question.strip() or not evidence_needed:
         raise ValueError('provide the next question and missing evidence')
+    scope = []
+    for item in evidence_needed:
+        if not item['fact'].strip():
+            raise ValueError('evidence fact must be nonempty')
+        if paths is not None:
+            if item['scope']:
+                raise ValueError('reader paths cannot be combined with evidence scopes')
+        else:
+            candidates, unmatched = select_paths(root, item['scope'], include_untracked)
+            if unmatched or not candidates:
+                raise ValueError(f"No source for {item['fact']!r}: {unmatched or item['scope']}")
+            scope.extend(item['scope'] or ['.'])
+    scope = list(dict.fromkeys(scope))
     work = Path(tempfile.mkdtemp(prefix='explore-solve-', dir=scratch))
     run = work/'result'
     task = work/'task.txt'
     task.write_text('SOLVER QUESTION (do not solve it):\n'+question
                     +'\n\nCOLLECT THESE CODE FACTS:\n'
-                    +'\n'.join('- '+s for s in evidence_needed)
+                    +'\n'.join('- '+item['fact']+' [scope: '+', '.join(item['scope'] or ['.'])+']' for item in evidence_needed)
                     +'\n\nALREADY KNOWN:\n'+known_findings
                     +'\nReturn the smallest source blocks establishing these facts. '
                     'Do not collect whole functions unless needed for the facts.\n')
@@ -162,12 +183,12 @@ def read_evidence(run_dir: str, ids: list[int], offset: int | None = None,
     verified = verify_handoff(Path(metadata['repo']), selected, include_source=new_selection)
     if new_selection:
         blocks = evidence_blocks(verified, [] if offset == 0 else state['read'])
-        selections[key] = dict(text=format_evidence(verified, blocks), offset=0, covered=0,
+        selections[key] = dict(text=format_evidence(verified, blocks, include_facts=False), offset=0, covered=0,
                                ranges=[{k:v for k,v in block.items() if k != 'source'} for block in blocks])
     selection = selections[key]
     source = selection['text']
     if offset is None:
-        offset = selection['offset']
+        offset = int(selection['offset'])
     if offset > len(source):
         raise ValueError('offset exceeds the selected output')
     end = min(offset+max_chars, len(source))

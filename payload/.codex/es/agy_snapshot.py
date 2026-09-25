@@ -32,19 +32,15 @@ def git_paths(root: Path, include_untracked: bool = False) -> list[str]:
         raise EvidenceError('non-UTF-8 Git filenames are unsupported') from exc
 
 
-def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
-           scopes: list[str], include_untracked: bool, encodings: dict[str, str]) -> dict:
-    """Export current worktree bytes, NOT committed Git blobs. No silent cap truncation."""
+def select_paths(root: Path, scopes: list[str], include_untracked: bool = False) -> tuple[list[str], list[str]]:
     scopes = [safe_relative(scope) for scope in scopes]
     unmatched_scopes = []
-    if mode == 'reader':
-        if not paths:
-            raise EvidenceError('reader requires explicit --path(s)')
-        candidates = list(dict.fromkeys(paths))
-    elif scopes and '.' not in scopes:
-        include_untracked = True
+    if scopes:
         selected = set()
         for scope in scopes:
+            if scope == '.':
+                selected.update(git_paths(root, include_untracked))
+                continue
             matches = [root/scope] if (root/scope).exists() else root.glob(scope)
             files = set()
             for match in matches:
@@ -57,6 +53,19 @@ def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
         candidates = sorted(selected)
     else:
         candidates = git_paths(root, include_untracked)
+    return candidates, unmatched_scopes
+
+
+def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
+           scopes: list[str], include_untracked: bool, encodings: dict[str, str]) -> dict:
+    """Export current worktree bytes, NOT committed Git blobs. No silent cap truncation."""
+    if mode == 'reader':
+        if not paths:
+            raise EvidenceError('reader requires explicit --path(s)')
+        candidates, unmatched_scopes = list(dict.fromkeys(paths)), []
+    else:
+        candidates, unmatched_scopes = select_paths(root, scopes, include_untracked)
+        include_untracked = include_untracked or any(scope != '.' for scope in scopes)
     entries = []; skipped = []; total = 0
     # The private output directory is created by the runner; workspace is new.
     workspace.mkdir(mode=0o700, exist_ok=False)

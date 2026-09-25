@@ -21,7 +21,8 @@ a usage limit. The harness handles this fallback within the same deadline.
 For AGY, call the plugin's `collect` MCP tool directly. The host exposes this
 namespace outside code-mode cells, so collection returns only on completion,
 failure, or cancellation. The collection deadline comes from `agy.toml`.
-Give the next decision and the missing code facts separately.
+Give the next decision and pair each missing fact with its source scope in
+`evidence_needed: [{fact, scope}]`. The harness validates and unions these scopes.
 Reuse known findings; reopen settled questions only for a source change, new failure, or counterexample.
 If known Symbols locations can seed the search, pass their results directly to
 `collect.navigation` using [the example](references/agy.md). Include existing

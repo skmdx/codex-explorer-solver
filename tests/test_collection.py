@@ -41,7 +41,8 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         kw.setdefault('navigation',None)
         kw.setdefault('known_findings','')
         scope=kw.pop('scope',['src'])
-        return await collect(str(self.repo),'Where is f defined?', ['definition'],str(self.base),scope,**kw)
+        evidence = kw.pop('evidence_needed', [{'fact':'definition','scope':scope}])
+        return await collect(str(self.repo),'Where is f defined?', evidence,str(self.base),**kw)
 
     async def test_reader_accepts_hook_external_file_and_encoding_correction(self):
         hook=self.repo/'.git/hooks/pre-commit'
@@ -68,18 +69,29 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         metrics=json.loads((run/'metrics.json').read_text())
         self.assertEqual(metrics['effective_model'],'gemini-custom-model')
 
-    async def test_unmatched_scope_is_returned_with_available_evidence(self):
-        result=await self.run_collection(scope=['src/*.py','missing/*.c'])
-        self.assertEqual(result['status'],'validated',result)
-        self.assertEqual(result['unmatched_scopes'],['missing/*.c'])
-        self.assertIn('return 1',read_evidence(result['run_dir'],[1])['text'])
-        request=(Path(result['run_dir'])/'request.jsonl').read_text()
-        self.assertIn('unmatched_scopes',request)
+    async def test_each_fact_scope_is_checked_before_worker_or_snapshot_creation(self):
+        before = set(self.base.iterdir())
+        with self.assertRaisesRegex(ValueError, 'regression tests'):
+            await self.run_collection(evidence_needed=[
+                {'fact':'definition','scope':['src/*.py']},
+                {'fact':'regression tests','scope':['missing/*.c']}])
+        self.assertEqual(set(self.base.iterdir()),before)
 
     async def test_empty_scope_failure_returns_error_without_catalog_crash(self):
-        result=await self.run_collection(scope=['missing/*.c'])
-        self.assertNotEqual(result['status'],'validated')
-        self.assertIn('no eligible source files',result['error'])
+        with self.assertRaisesRegex(ValueError, 'No source'):
+            await self.run_collection(scope=['missing/*.c'])
+
+    async def test_fact_scopes_are_unioned_including_untracked_tests(self):
+        (self.repo/'tests').mkdir()
+        (self.repo/'tests/test_example.py').write_text('assert 1 == 1\n')
+        result=await self.run_collection(evidence_needed=[
+            {'fact':'definition','scope':[]},
+            {'fact':'regression tests','scope':['tests']}])
+        run=Path(result['run_dir'])
+        manifest=json.loads((run/'source-manifest.json').read_text())
+        self.assertEqual([f['path'] for f in manifest['files']],['src/example.py','tests/test_example.py'])
+        request=(run/'request.jsonl').read_text()
+        self.assertIn('regression tests [scope: tests]',request)
 
     async def test_waits_and_returns_index_then_originals(self):
         nav={'root':str(self.base),'queries':[{'tool':'references','error':'unsupported'}]}
@@ -118,8 +130,8 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 schema=next(t.inputSchema for t in (await session.list_tools()).tools if t.name=='collect')
                 self.assertNotIn('timeout',schema['properties'])
                 result=await session.call_tool('collect',dict(repo=str(self.repo),
-                    question='Where is f?',evidence_needed=['definition'],scratch_dir=str(self.base),
-                    scope=['src/**/*.py'],navigation=None,known_findings=''))
+                    question='Where is f?',evidence_needed=[{'fact':'definition','scope':['src/**/*.py']}],scratch_dir=str(self.base),
+                    navigation=None,known_findings=''))
                 self.assertFalse(result.isError)
                 self.assertIsNone(result.structuredContent)
                 index=json.loads(result.content[0].text)
@@ -200,7 +212,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('    return 1',first['text'])
         self.assertNotIn('    return 1',second['text'])
         self.assertIn('def f():',second['text'])
-        self.assertIn('return value',second['text'])
+        self.assertNotIn('return value',second['text'])
 
     async def test_partial_delivery_does_not_hide_unread_source_in_another_selection(self):
         result = await self.run_collection(); run = Path(result['run_dir'])

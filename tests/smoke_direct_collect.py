@@ -41,9 +41,9 @@ First use functions.exec with yield_time_ms 1. Print typeof tools.mcp__explore_s
 and whether ALL_TOOLS contains it. Then actually attempt to call that nested function with
 empty arguments, catch the TypeError, and print NESTED_BLOCKED. Do not invoke a shell fallback.
 Next call the direct explore-solve collect MCP tool once with repo={str(repo)!r},
-scratch_dir={str(root)!r}, scope=["example.py"], navigation=null, known_findings="",
+scratch_dir={str(root)!r}, navigation=null, known_findings="",
 question="How does dispatch normalize its input?",
-evidence_needed=["dispatch definition and the normalize function it calls"].
+evidence_needed=[{{"fact":"dispatch definition and the normalize function it calls","scope":["example.py"]}}].
 Use real AGY. After collection succeeds, call read_evidence for the relevant returned IDs,
 then answer from the originals. Do not read example.py through other tools or launch subprocesses.
 Do not retry collection. This is a read-only test.'''

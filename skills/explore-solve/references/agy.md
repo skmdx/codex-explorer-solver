@@ -25,9 +25,8 @@ Example direct `collect` arguments after a Symbols query:
 {
   "repo": "/absolute/repo",
   "scratch_dir": "/absolute/workspace/tmp",
-  "scope": ["src"],
   "question": "Which condition prevents adoption of an old completion?",
-  "evidence_needed": ["The adoption condition and writes to the version it checks"],
+  "evidence_needed": [{"fact": "The adoption condition and writes to the version it checks", "scope": ["src"]}],
   "navigation": {
     "root": "/absolute/workspace",
     "queries": [{
@@ -55,13 +54,14 @@ updated Symbols server. Include existing `read_symbols` results in `queries`:
 their full-line receipts avoid returning the same version of source again.
 Do not repeat an LSP
 query just to fill `navigation`. Errors remain unavailable results, not empty reference lists.
-`scope` covers the question's source area; LSP hits are starting points, not an
+Each evidence item's `scope` covers that fact's source area; LSP hits are starting points, not an
 exhaustive export filter. Without a useful symbol seed, pass `navigation: null`.
+The harness checks every item's scope before model startup and exports their union.
 Scopes are repository-relative files, directories, or globs: `src/*.c` selects direct
 children; `src/**/*.c` also includes nested files. Multiple patterns are combined.
 Explicit scopes include ignored/untracked files and nested repositories. With
 `scope: []` or `["."]`, Git's tracked list is used; `include_untracked` adds
-non-ignored untracked files. Unmatched patterns are returned as `unmatched_scopes`.
+non-ignored untracked files. Unmatched patterns fail before model startup and identify the affected fact.
 Use an empty `known_findings` only for a new investigation.
 
 ## Read only needed originals
@@ -75,7 +75,7 @@ be used as `apply_patch` context. For large selections, repeat the same IDs
 without an offset: each call returns the next page until `complete` is true.
 `next_offset` reports where that next page starts.
 Completed ranges are reused across different ID selections and from matching
-Symbols receipts. New observations are still returned. In-progress pages retain
+Symbols receipts. Observations stay in the collection index; reads return only source blocks. In-progress pages retain
 stable offsets; their ranges count as read only after the full selection is delivered.
 Explicit `offset: 0` rereads after
 context loss. `max_chars` is the response page size, not an

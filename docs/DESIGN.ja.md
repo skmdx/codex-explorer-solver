@@ -33,17 +33,18 @@ hookへ渡った結果を対象にするため、その後の外側のコード�
 
 | 調査方法 | `collect`の引数 |
 |---|---|
-| ディレクトリを絞って検索する | `scope: ["src", "tests"]` |
-| globでファイルを選ぶ | `scope: ["src/**/*.c", "tests/test_?.py"]` |
-| 指定ファイルの全文を読ませる（Reader） | `paths: [".git/hooks/pre-commit"]`。`scope: []`, `navigation: null`を指定 |
-| scopeを絞らず未追跡ファイルも検索対象にする | `scope: []`, `include_untracked: true`。Gitのignore対象は含まない |
+| 実装とテストを調べる | `evidence_needed: [{fact: "条件分岐", scope: ["src"]}, {fact: "回帰テスト", scope: ["tests"]}]` |
+| globでファイルを選ぶ | 各項目の `scope: ["src/**/*.c", "tests/test_?.py"]` |
+| 指定ファイルの全文を読ませる（Reader） | `paths: [".git/hooks/pre-commit"]`。各項目の `scope: []`, `navigation: null`を指定 |
+| scopeを絞らず未追跡ファイルも検索対象にする | 各項目の `scope: []`, `include_untracked: true`。Gitのignore対象は含まない |
 
 `scope`はリポジトリ相対で、複数指定は和集合です。`*`・`?`・`[abc]`は`/`をまたがず、
 `**/`は0階層以上に一致します。`src/*.c`は直下、`src/**/*.c`は直下と子ディレクトリのCファイルが対象です。
 ドットで始まる名前も対象です。ファイル・ディレクトリ名の直接指定も使えます。
 明示したscopeは実ファイルから選び、未追跡・ignore対象・入れ子の別リポジトリも含めます。
 `[]`または`["."]`はGit追跡済み一覧を使い、`include_untracked`でignoreされていない未追跡ファイルを追加します。
-一部のscopeにファイルがなければ、収集を続けて`unmatched_scopes`にその指定を返します。
+各調査項目のscopeをモデル起動前に検査し、ファイルがない指定は項目名とともにエラーにします。
+収集対象は全項目の和集合です。本文取得時は、一覧で返した説明文を再掲しません。
 Readerは明示したファイルだけを渡し、`include_untracked`とは併用しません。
 収集はSonnet 4.6を優先し、利用量上限の場合のみGemini Flash Highへ切り替えます。進行中のAGY会話を引き継ぎ、期限は全試行で共有します。認証・通信・タイムアウトでは切り替えません。
 

@@ -195,7 +195,7 @@ def evidence_blocks(data: dict[str, Any], read_ranges: list[dict] | None = None)
     blocks = []
     for (path, digest, encoding), entry in files.items():
         known = [r for r in read_ranges or [] if (r['path'], r['sha256'], r['encoding']) == (path, digest, encoding)]
-        block = None
+        block: dict[str, Any] | None = None
         for number, line in sorted(entry.items()):
             if any(r['start'] <= number <= r['end'] for r in known):
                 continue
@@ -211,15 +211,14 @@ def evidence_blocks(data: dict[str, Any], read_ranges: list[dict] | None = None)
     return blocks
 
 
-def format_evidence(data: dict[str, Any], blocks: list[dict] | None = None) -> str:
+def format_evidence(data: dict[str, Any], blocks: list[dict] | None = None, *, include_facts: bool = True) -> str:
     """Keep range labels outside unchanged, contiguous source blocks."""
     if blocks is None:
         blocks = evidence_blocks(data)
-    facts = dict.fromkeys(f"{item['path']}:{item['start']}-{item['end']} {item['symbol']}: {item['evidence']}"
-                         for category in ('primary', 'related') for item in data[category])
-    sections = list(facts)
+    sections = list(dict.fromkeys(f"{item['path']}:{item['start']}-{item['end']} {item['symbol']}: {item['evidence']}"
+                         for category in ('primary', 'related') for item in data[category])) if include_facts else []
     sections.extend(f"Source {block['path']}:{block['start']}-{block['end']}\n{block['source']}" for block in blocks)
-    if data.get('unresolved'):
+    if include_facts and data.get('unresolved'):
         sections.append('Unresolved:\n' + '\n'.join(data['unresolved']))
     return '\n\n'.join(sections)
 
