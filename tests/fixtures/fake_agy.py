@@ -13,12 +13,18 @@ if args == ['models']:
 model=args[args.index('--model')+1];agent=args[args.index('--agent')+1]
 assert '--dangerously-skip-permissions' in args
 assert args[args.index('--mode')+1]==('accept-edits' if agent=='es-editor' else 'plan')
-assert '--continue' not in args and '--conversation' not in args and '-p' not in args
+assert '--continue' not in args and '-p' not in args
+if '--conversation' in args:
+    assert agent == 'es-reviewer'
+    assert args[args.index('--conversation')+1] == 'fixture-1'
 assert args[args.index('--input-format')+1]=='stream-json'
 lines=sys.stdin.buffer.readlines();assert len(lines)==1
 message=json.loads(lines[0]);assert message['event']=='user'
 text=message['message']['content'];case=os.getenv('FAKE_CASE','ok')
+case=json.loads(os.getenv('FAKE_MODEL_CASES','{}')).get(model,case)
 def emit(value):print(json.dumps(value),flush=True)
+if case=='model_unavailable':
+    emit({'event':'result','result':{'status':'ERROR','error':'Unknown model','num_turns':0}});sys.exit(1)
 tools=['finish'] if agent=='es-reader' else ['view_file','grep_search','finish']
 if case=='write_tool':tools+=['write_to_file']
 if case=='mcp_tool':tools+=['mcp_send_message']
@@ -41,8 +47,24 @@ if case=='auth':
     emit({'event':'result','result':{'status':'ERROR','error':'authentication required','num_turns':0}});sys.exit(1)
 if case=='fail_usage':
     emit({'event':'result','result':{'status':'ERROR','error':'simulated failure','num_turns':1,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}});sys.exit(1)
+def review_usage():
+    p=pathlib.Path('conversation_usage.json')
+    previous=json.loads(p.read_text()) if '--conversation' in args and p.exists() else {}
+    counts={key:previous.get(key,0)+value for key,value in
+            {'input_tokens':100,'output_tokens':30,'total_tokens':130}.items()}
+    p.write_text(json.dumps(counts))
+    return counts
+if case in ('quota','quota_after_progress'):
+    if case=='quota_after_progress':
+        pathlib.Path('conversation_state.txt').write_text('Verified checkpoint: version comparison precedes adoption.')
+    emit({'event':'result','result':{'status':'ERROR','error':'Individual quota reached. Resets later.',
+          'response':'Partial review.', 'num_turns':1,
+          'usage':review_usage()}});sys.exit(1)
 if agent in ('es-reviewer','es-editor'):
     response = 'Reviewed the supplied task.'
+    if '--conversation' in args and pathlib.Path('conversation_state.txt').exists():
+        assert 'Continue the original task' in text
+        response += pathlib.Path('conversation_state.txt').read_text()
     if agent == 'es-editor':
         pathlib.Path(os.environ['FAKE_ORIGINAL_FILE']).write_text('edited\n')
         response = 'Edited the requested file.'
@@ -51,7 +73,7 @@ if agent in ('es-reviewer','es-editor'):
         response = 'Partial review.'
         print('print timeout after 30m0s with turn in progress',file=sys.stderr)
     emit({'event':'result','result':{'conversation_id':'fixture-1','status':'SUCCESS',
-          'response':response,'num_turns':1,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}})
+          'response':response,'num_turns':1,'usage':review_usage()}})
     sys.exit(1 if case == 'nonzero_success' else 0)
 root=pathlib.Path.cwd().parent/'sources'
 manifest=json.loads((root.parent/'source-manifest.json').read_text())

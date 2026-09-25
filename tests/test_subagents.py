@@ -110,5 +110,97 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_listing(self):
         self.assertIn('gemini-3.8-flash-high', await subagents.models())
 
+    async def test_quota_fallback_resumes_progress_through_pro_to_flash(self):
+        opus, pro, flash = subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'quota_after_progress',pro:'quota'})
+        result = await self.run_task(model=opus)
+        self.assertEqual(result['status'],'completed',result)
+        self.assertEqual(result['model'],flash)
+        self.assertIn('Verified checkpoint',result['response'])
+        self.assertEqual([a['model'] for a in result['attempts']],[opus,pro,flash])
+        self.assertEqual([a['resumed_from'] for a in result['attempts']],[None,'fixture-1','fixture-1'])
+        self.assertEqual(result['usage']['total_tokens'],390)
+        self.assertEqual([a['usage']['total_tokens'] for a in result['attempts']],[130,260,390])
+        for attempt in result['attempts']:
+            self.assertTrue((Path(attempt['run_dir'])/'events.jsonl').exists())
+
+    async def test_startup_unavailability_starts_next_model_with_original_task(self):
+        opus, pro, _ = subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'model_unavailable'})
+        result = await self.run_task(model=opus)
+        self.assertEqual(result['model'],pro)
+        self.assertEqual(result['status'],'completed',result)
+        self.assertIsNone(result['attempts'][1]['resumed_from'])
+        self.assertIsNone(result['usage']['total_tokens'])
+        self.assertFalse(result['usage']['usage_complete'])
+        request=json.loads((Path(result['attempts'][1]['run_dir'])/'request.jsonl').read_text())
+        self.assertEqual(request['message']['content'],'Review the given facts.')
+
+    async def test_all_models_unavailable_returns_failure_and_all_attempts(self):
+        os.environ['FAKE_CASE']='quota'
+        result=await self.run_task(model=subagents.CONFIG['review_model_order'][0])
+        self.assertEqual(result['status'],'failed')
+        self.assertEqual(len(result['attempts']),3)
+
+    async def test_pro_starts_at_pro_and_timeout_reaps_without_trying_flash(self):
+        opus, pro, flash=subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES']=json.dumps({pro:'quota'})
+        result=await self.run_task(model=pro)
+        self.assertEqual([a['model'] for a in result['attempts']],[pro,flash])
+        os.environ['FAKE_MODEL_CASES']=json.dumps({opus:'quota_after_progress',pro:'timeout'})
+        pid=self.root/'pid';os.environ['FAKE_PID_FILE']=str(pid)
+        with patch.dict(subagents.CONFIG,timeout_seconds=0.5), \
+                patch.object(subagents,'run_attempt',wraps=subagents.run_attempt) as attempts:
+            result=await self.run_task(model=opus)
+        self.assertEqual(result['status'],'timeout',result)
+        self.assertEqual(len(result['attempts']),2)
+        self.assertLess(attempts.call_args_list[1].args[7],attempts.call_args_list[0].args[7])
+        with self.assertRaises(ProcessLookupError):os.kill(int(pid.read_text()),0)
+
+    async def test_cancellation_during_fallback_does_not_launch_flash(self):
+        opus, pro, _=subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES']=json.dumps({opus:'quota_after_progress',pro:'timeout'})
+        pid=self.root/'pid';os.environ['FAKE_PID_FILE']=str(pid)
+        task=asyncio.create_task(self.run_task(model=opus))
+        async def started():
+            while not pid.exists():await asyncio.sleep(0.01)
+        await asyncio.wait_for(started(),5)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):await task
+        with self.assertRaises(ProcessLookupError):os.kill(int(pid.read_text()),0)
+        self.assertEqual(len(list(self.root.glob('agy-subagent-*/attempt-*'))),2)
+
+    async def test_auth_protocol_timeout_and_edit_do_not_fallback(self):
+        opus=subagents.CONFIG['review_model_order'][0]
+        for case in ('auth','bad_model','invalid_json','native_timeout','nonzero_success'):
+            with self.subTest(case=case):
+                os.environ['FAKE_CASE']=case
+                result=await self.run_task(model=opus)
+                self.assertEqual(len(result['attempts']),1)
+                self.assertNotEqual(result['status'],'completed')
+        os.environ['FAKE_CASE']='quota'
+        result=await self.run_task(model=opus,mode='edit',repo=str(self.repo))
+        self.assertEqual(len(result['attempts']),1)
+
+    async def test_mcp_call_completes_the_whole_fallback_chain(self):
+        opus, pro, flash=subagents.CONFIG['review_model_order']
+        bin_dir=self.root/'bin';bin_dir.mkdir()
+        (bin_dir/'agy').symlink_to(KIT/'tests/fixtures/fake_agy.py')
+        env=dict(os.environ, PATH=str(bin_dir)+os.pathsep+os.environ['PATH'],
+                 FAKE_MODEL_CASES=json.dumps({opus:'quota_after_progress',pro:'quota'}))
+        params=StdioServerParameters(command=sys.executable,
+                    args=[str(KIT/'payload/.codex/es/subagents.py')],env=env)
+        async with stdio_client(params) as (read,write):
+            async with ClientSession(read,write) as session:
+                await session.initialize()
+                reply=await session.call_tool('run',dict(task='Review the given facts.',
+                    scratch_dir=str(self.root),model=opus))
+                self.assertFalse(reply.isError)
+                result=json.loads(reply.content[0].text)
+                self.assertEqual(result['status'],'completed',result)
+                self.assertEqual(result['model'],flash)
+                self.assertEqual(len(result['attempts']),3)
+                self.assertIn('Verified checkpoint',result['response'])
+
 
 if __name__ == '__main__': unittest.main()

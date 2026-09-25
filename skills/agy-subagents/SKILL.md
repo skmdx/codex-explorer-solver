@@ -11,13 +11,9 @@ Give a self-contained task with the needed facts and deliverable. Keep Claude
 review requests concise. Pass `repo` when files are needed; omit it for pure
 reasoning. `scratch_dir` is an existing temporary directory outside the repository.
 
-The default model is Gemini High. Use `models` to choose an available Claude or
-other explicitly requested model. For reviews requesting Claude Opus, use this
-priority: Claude Opus → Gemini Pro (High) → Gemini Flash (High). When a model is
-unavailable (including quota exhaustion), report the reason and try the next model
-without asking for confirmation. If all three are unavailable, report that the
-review could not be completed. For other tasks, respect the requested model.
-Do not shorten deadlines or lower reasoning to work around a wait.
+The default model is Gemini High. Use `models` to select a requested model.
+The harness handles review model fallback using `agy.toml`; do not repeat calls
+to implement it yourself. Report the returned model, failures and incomplete reviews.
 
 `mode: review` provides read/search tools. `mode: edit` also allows file edits and
 commands: use it only for authorized work and name the files to change in the task.

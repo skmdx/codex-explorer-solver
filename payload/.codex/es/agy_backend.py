@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Documented AGY stream-json transport. Python stdlib, Linux/macOS/WSL.
 
-One process receives one user event and EOF. No conversation resume, API client,
-model fallback, automatic retries, or nested model delegation.
+One process receives one user event and EOF. Callers own conversation continuation
+and model selection. This transport does not retry or delegate work.
 """
 from __future__ import annotations
 import json

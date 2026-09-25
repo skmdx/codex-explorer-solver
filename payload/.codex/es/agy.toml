@@ -5,3 +5,4 @@ timeout_seconds = 1800
 explorer_model = "gemini-3.8-flash-high"
 reader_model = "gemini-3.8-flash-high"
 deep_model = "gemini-3.8-flash-high"
+review_model_order = ["claude-opus-4-6-thinking", "gemini-3.1-pro-high", "gemini-3.8-flash-high"]
