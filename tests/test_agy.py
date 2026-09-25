@@ -307,7 +307,7 @@ class AgyRunnerTests(Fixture):
     def test_accounting_failure_retains_evidence_and_reports_error(self):
         args=SimpleNamespace(repo=self.repo,task_file=self.task,state_dir=self.state,
              out_dir=self.base/'run',agy=str(FAKE),timeout=None,mode='localize',
-             deep=False,path=[],scope=[],include_untracked=False,config=None,model=None,encoding=[],navigation_file=None)
+             path=[],scope=[],include_untracked=False,config=None,model=None,encoding=[],navigation_file=None)
         with patch.object(budget,'finish',side_effect=sqlite3.OperationalError('database full')):
             result,code=locate.run(args)
         self.assertEqual(code,1)
@@ -318,7 +318,7 @@ class AgyRunnerTests(Fixture):
         self.assertFalse(self.metrics()['task_usage_recorded'])
     def test_localize_validated_and_no_codex(self):
         r=self.invoke();self.assertEqual(r.returncode,0,r.stderr+r.stdout)
-        m=self.metrics();self.assertEqual(m['backend'],'agy');self.assertEqual(m['requested_model'],'gemini-3.8-flash-high')
+        m=self.metrics();self.assertEqual(m['backend'],'agy');self.assertEqual(m['requested_model'],'claude-sonnet-4-6')
         self.assertNotIn('codex',m['argv']);self.assertFalse((self.repo/'.codex/agents').exists())
         h=json.loads((self.base/'run/handoff.json').read_text());self.assertEqual(h['primary'][0]['sha256'],hashlib.sha256((self.repo/'src/example.py').read_bytes()).hexdigest())
     def test_reader_returns_verified_citations_without_source_in_argv(self):
@@ -444,16 +444,6 @@ class AgyRunnerTests(Fixture):
     def test_concurrent_original_change_rejected(self):
         r=self.invoke('original_changed');self.assertNotEqual(r.returncode,0);self.assertIn('stale_source_corpus',self.metrics()['error'])
         self.assertIsNone(json.loads(r.stdout)['evidence'])
-    def test_deep_can_run_first_and_repeat(self):
-        for i in range(3):
-            r=self.invoke(extra=['--deep'],out=f'deep{i}')
-            self.assertEqual(r.returncode,0,r.stdout+r.stderr)
-        self.assertEqual(budget.status(self.state)['attempts'],3)
-    def test_deep_same_flash_family_high(self):
-        self.assertEqual(self.invoke().returncode,0)
-        r=self.invoke(extra=['--deep'],out='deep');self.assertEqual(r.returncode,0,r.stdout+r.stderr)
-        self.assertEqual(self.metrics('deep')['requested_model'],'gemini-3.8-flash-high')
-        self.assertEqual(budget.status(self.state)['attempts'],2)
     def test_more_than_two_calls_succeed(self):
         for i in range(4):
             r=self.invoke(out=f'run{i}');self.assertEqual(r.returncode,0,r.stdout+r.stderr)
@@ -484,3 +474,44 @@ class AgyRunnerTests(Fixture):
         self.assertEqual(budget.status(self.state)['attempts'],0)
 
 if __name__=='__main__':unittest.main()
+
+
+class CollectionFallbackTests(Fixture):
+    def test_quota_resumes_collection_on_flash(self):
+        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'quota_after_progress'})}):
+            proc=self.invoke()
+        self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+        report=json.loads(proc.stdout)
+        self.assertEqual([x['model'] for x in report['attempts']],['claude-sonnet-4-6','gemini-3.8-flash-high'])
+        self.assertEqual(report['effective_model'],'gemini-3.8-flash-high')
+        self.assertTrue(self.metrics()['conversation_resumed'])
+        self.assertEqual(report['usage']['total_tokens'],260)
+        self.assertTrue((self.base/'run/workspace/conversation_state.txt').exists())
+
+    def test_other_errors_do_not_fallback(self):
+        for case in ['model_unavailable','fail_usage','invalid_json']:
+            with self.subTest(case=case):
+                proc=self.invoke(case,out=case)
+                self.assertNotEqual(proc.returncode,0)
+                self.assertEqual(len(json.loads(proc.stdout)['attempts']),1)
+
+    def test_reader_fallback(self):
+        for mode,extra in [('reader',['--mode','reader','--path','src/example.py'])]:
+            with self.subTest(mode=mode), patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'quota'})}):
+                proc=self.invoke(extra=extra,out=mode)
+                self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+                self.assertEqual(json.loads(proc.stdout)['effective_model'],'gemini-3.8-flash-high')
+
+    def test_fallback_shares_deadline(self):
+        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'quota','gemini-3.8-flash-high':'timeout'})}):
+            proc=self.invoke(extra=['--timeout','0.3'])
+        self.assertNotEqual(proc.returncode,0)
+        report=json.loads(proc.stdout)
+        self.assertEqual(report['status'],'local_deadline')
+        self.assertEqual(len(report['attempts']),2)
+        self.assertLess(self.metrics()['elapsed_seconds'],2)
+
+    def test_explicit_flash_starts_directly(self):
+        proc=self.invoke(extra=['--model','gemini-3.8-flash-high'])
+        self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+        self.assertEqual([a['model'] for a in json.loads(proc.stdout)['attempts']],['gemini-3.8-flash-high'])

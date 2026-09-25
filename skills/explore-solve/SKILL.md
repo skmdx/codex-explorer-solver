@@ -15,6 +15,9 @@ Ask it for the missing evidence, not the entire user task. Group requests that s
 source and callers; split only when they need different source areas. There is no
 fixed limit on AGY calls or internal tool steps.
 
+Collection starts with Sonnet and resumes on Gemini Flash High if Sonnet reaches
+a usage limit. The harness handles this fallback within the same deadline.
+
 For AGY, call the plugin's `collect` MCP tool directly. The host exposes this
 namespace outside code-mode cells, so collection returns only on completion,
 failure, or cancellation. The collection deadline comes from `agy.toml`.

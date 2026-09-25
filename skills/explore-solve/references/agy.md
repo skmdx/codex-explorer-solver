@@ -49,7 +49,7 @@ Example direct `collect` arguments after a Symbols query:
 ```
 
 Pass the actual MCP response as `result`, without rebuilding this example by hand.
-The host sends only `structuredContent` to Gemini, remapping location paths while
+The host sends only `structuredContent` to the Explorer, remapping location paths while
 keeping names, page metadata and errors unchanged. Text-only results need the
 updated Symbols server. Include existing `read_symbols` results in `queries`:
 their full-line receipts avoid returning the same version of source again.

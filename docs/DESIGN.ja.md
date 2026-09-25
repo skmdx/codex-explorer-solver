@@ -36,7 +36,6 @@ hookへ渡った結果を対象にするため、その後の外側のコード�
 | ディレクトリを絞って検索する | `scope: ["src", "tests"]` |
 | globでファイルを選ぶ | `scope: ["src/**/*.c", "tests/test_?.py"]` |
 | 指定ファイルの全文を読ませる（Reader） | `paths: [".git/hooks/pre-commit"]`。`scope: []`, `navigation: null`を指定 |
-| `deep_model`で検索する | `deep: true`。既定値は通常と同じHigh。Readerとは併用しない |
 | scopeを絞らず未追跡ファイルも検索対象にする | `scope: []`, `include_untracked: true`。Gitのignore対象は含まない |
 
 `scope`はリポジトリ相対で、複数指定は和集合です。`*`・`?`・`[abc]`は`/`をまたがず、
@@ -46,6 +45,8 @@ hookへ渡った結果を対象にするため、その後の外側のコード�
 `[]`または`["."]`はGit追跡済み一覧を使い、`include_untracked`でignoreされていない未追跡ファイルを追加します。
 一部のscopeにファイルがなければ、収集を続けて`unmatched_scopes`にその指定を返します。
 Readerは明示したファイルだけを渡し、`include_untracked`とは併用しません。
+収集はSonnet 4.6を優先し、利用量上限の場合のみGemini Flash Highへ切り替えます。進行中のAGY会話を引き継ぎ、期限は全試行で共有します。認証・通信・タイムアウトでは切り替えません。
+
 モデル設定は[agy.toml](../payload/.codex/es/agy.toml)にあり、1回だけ変える場合は`model`を使います。
 実行期限は同ファイルの`timeout_seconds`（既定1800秒＝30分）で設定し、収集と一般の委譲で共有します。
 MCP引数には公開せず、Solverが呼出しごとに短縮する経路をなくしています。
@@ -62,7 +63,7 @@ Codex 0.156.1がこの指定を解釈し、直接のMCP呼出しを残します�
 JSONは`root`（LSPのworkspacePathの絶対パス）と`queries`（問い合わせ条件と結果の配列）を持ちます。
 `queries[].result`には`structuredContent`を持つ実際のSymbols MCPレスポンスを渡します。
 ホストは構造化データの位置パスだけをコピー側へ変換し、ページ情報・名前・エラーを保持します。
-表示用テキストや取得済みの本文はGeminiへ再送しません。
+表示用テキストや取得済みの本文はExplorerへ再送しません。
 `read_symbols`の`readSources`は全文のUTF-8ハッシュをコピーのハッシュと照合し、
 一致した版の全行範囲を取得済みとして扱います。LSPの範囲は1始まり・終端を含まない形式です。
 範囲外の候補は未調査の手掛かりであり、元リポジトリを直接読む指示にはしません。
@@ -70,7 +71,7 @@ JSONは`root`（LSPのworkspacePathの絶対パス）と`queries`（問い合わ
 通常はMCPの`navigation`引数へSymbols結果を直接渡します。保存はサーバーが行います。
 具体例は[AGY参照手順](../skills/explore-solve/references/agy.md)にあります。
 LSPだけで回答できる問いにはAGYを使いません。LSP結果からexport範囲を自動縮小せず、
-Geminiは足りない条件・呼出し・テストを追加探索します。失敗した問い合わせも結果と区別して渡します。
+Explorerは足りない条件・呼出し・テストを追加探索します。失敗した問い合わせも結果と区別して渡します。
 入力は`RUN/navigation.json`に保存します。その回の探索用で、STATEへの蓄積は行いません。
 
 ## 結果と保存ファイル
@@ -110,7 +111,7 @@ AGYが返す項目は`references`（引用）と`unresolved`（不足や障害�
 ホストが保存用handoffの`version: 3`と状態を付けます。引用あり・未解決事項ありなら`partial`、
 引用だけなら`ready`、引用なしなら`not_found`です。実行自体の失敗は`report.status`と`error`に残します。
 引用パスは、コピーの絶対パスでもmanifest内の元パスでも、ホストが元ファイルへ対応付けます。
-Geminiに版番号・状態判定・パスの書換えを要求しません。
+Explorerに版番号・状態判定・パスの書換えを要求しません。
 引用箇所と未解決の問いの件数に固定上限はありません。同じ範囲が別の判断の根拠になる場合も返せます。
 引用の行数・原文出力・handoffのバイト数に追加上限は設けません。
 

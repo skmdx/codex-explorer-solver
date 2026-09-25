@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One AGY/Gemini 3.8 Flash invocation; Codex stays the parent solver.
+"""AGY source collection with quota fallback; Codex stays the parent solver.
 
 Linux/macOS/WSL, Python 3.11+. Private source export, structured evidence,
 persistent usage ledger. No Codex subprocesses or native subagent spawns.
@@ -11,6 +11,8 @@ import hashlib
 import json
 import math
 import os
+import re
+import time
 from pathlib import Path
 import shutil
 import sqlite3
@@ -73,19 +75,19 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             encodings[path] = codecs.lookup(encoding).name
         except LookupError as exc:
             raise EvidenceError(f'unknown encoding: {encoding}') from exc
-    if args.mode == 'reader' and (args.deep or not args.path or args.scope or args.include_untracked):
-        raise EvidenceError('reader requires explicit --path(s), without --deep/--scope/--include-untracked')
+    if args.mode == 'reader' and (not args.path or args.scope or args.include_untracked):
+        raise EvidenceError('reader requires explicit --path(s), without --scope/--include-untracked')
     if args.mode != 'reader' and args.path:
         raise EvidenceError('--path is for reader; use --scope to limit localization')
     if args.mode == 'reader' and args.navigation_file:
         raise EvidenceError('--navigation-file is for localize; reader already receives explicit source files')
     config = settings(args.config or HERE/'agy.toml')
-    key = 'reader_model' if args.mode == 'reader' else 'deep_model' if args.deep else 'explorer_model'
+    key = 'reader_model' if args.mode == 'reader' else 'explorer_model'
     model = args.model or config[key]
     executable = shutil.which(args.agy or config['executable'])
     if not executable: raise EvidenceError('agy CLI not found; install/authenticate it; no Codex fallback')
-    role = 'repo_reader' if args.mode == 'reader' else 'repo_deep_explorer' if args.deep else 'repo_explorer'
-    agent = 'es-reader' if args.mode == 'reader' else 'es-deep-explorer' if args.deep else 'es-explorer'
+    role = 'repo_reader' if args.mode == 'reader' else 'repo_explorer'
+    agent = 'es-reader' if args.mode == 'reader' else 'es-explorer'
     tools = ['finish'] if args.mode == 'reader' else ['view_file','grep_search','finish']
     definition = (HERE/'agy_agents'/f'{agent}.md').read_text(encoding='utf-8')
     schema = HERE/'agy-handoff.schema.json'
@@ -143,12 +145,42 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         metadata.update(snapshot_file_count=manifest['file_count'], snapshot_bytes=manifest['total_bytes'],
                         source_filter_exclusions=len(manifest['skipped']),
                         reader_source_bytes_sent=manifest['total_bytes'] if args.mode=='reader' else None)
-        argv = agy.command(executable, model, agent, schema, args.timeout)
-        argv.extend(['--add-dir', str(out / 'workspace')])
-        if args.mode != 'reader': argv.extend(['--add-dir', str(source_root)])
-        metadata['argv'] = argv  # No prompt/source/credentials are command-line arguments.
-        metadata['status'] = 'running'
-        process_code, reason, elapsed = agy.supervise(argv,out/'workspace',out,args.timeout,stream_state)
+        order = config['collection_model_order']
+        candidates = order[order.index(model):] if model in order else [model]
+        started = time.monotonic()
+        timeout = args.timeout if args.timeout is not None else config['timeout_seconds']
+        deadline = started + timeout
+        attempts = []
+        process_code = 124
+        conversation_id = None
+        for index, candidate in enumerate(candidates):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                reason = 'local_deadline'
+                break
+            attempt_out = out if index == 0 else out/f'attempt-{index+1}'
+            if index:
+                attempt_out.mkdir()
+                prompt = 'Continue the original evidence collection from this conversation; return the requested structured handoff.' if conversation_id else request
+                write_private(attempt_out/'request.jsonl', compact_json({'event':'user','message':{'content':prompt}})+'\n')
+            argv = agy.command(executable, candidate, agent, schema, remaining)
+            argv.extend(['--add-dir', str(out/'workspace')])
+            if args.mode != 'reader': argv.extend(['--add-dir', str(source_root)])
+            if conversation_id: argv.extend(['--conversation', conversation_id])
+            metadata['argv'] = argv
+            metadata['status'] = 'running'
+            stream_state = agy.StreamState(candidate, agent, tools)
+            process_code, reason, _ = agy.supervise(argv,out/'workspace',attempt_out,remaining,stream_state)
+            conversation_id = stream_state.conversation_id or conversation_id
+            result = stream_state.result or {}
+            error = result.get('error') or (attempt_out/'stderr.log').read_text(errors='replace')
+            attempts.append(dict(model=candidate,conversation_id=conversation_id,error=result.get('error'),
+                                 usage=stream_state.usage(),run_dir=str(attempt_out)))
+            quota = re.search(r'quota|resource_exhausted|usage limit|rate limit', str(error), re.IGNORECASE)
+            if reason or stream_state.error or result.get('status') == 'SUCCESS' or not quota:
+                break
+        elapsed = time.monotonic() - started
+        metadata.update(attempts=attempts, conversation_resumed=len(attempts)>1 and '--conversation' in argv)
         metadata.update(process_exit_code=process_code,elapsed_seconds=round(elapsed,3),
                         observed_tool_calls=len(stream_state.step_ids),
                         effective_model=stream_state.init.get('model') if stream_state.init else None,
@@ -158,7 +190,11 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                         conversation_id=stream_state.conversation_id,
                         protocol_error=stream_state.error)
         result = stream_state.result
+        latest = {a['conversation_id'] or a['run_dir']: a['usage'] for a in attempts}
         metadata['usage'] = stream_state.usage()
+        if len(latest) > 1:
+            metadata['usage'] = {key: sum(u[key] for u in latest.values()) if all(u[key] is not None for u in latest.values()) else None for key in agy.USAGE_KEYS}
+            metadata['usage'].update(source='latest_conversation_results.usage',provider='antigravity_cli',usage_complete=all(u['usage_complete'] for u in latest.values()))
         metadata['usage_complete'] = bool(metadata['usage']['usage_complete'] and not reason)
         if result:
             write_private(out/'result.json',compact_json(result)+'\n')
@@ -175,7 +211,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         else:
             wire = result.get('structured_output')
             if wire is None:
-                detail = (out/'stderr.log').read_text().strip()
+                detail = (attempt_out/'stderr.log').read_text().strip()
                 raise EvidenceError(f'AGY ended after {elapsed:.1f}s without structured_output. {detail}'.strip())
             write_private(out/'raw-handoff.json',compact_json(wire)+'\n')
             snapshot.verify_export(root,source_root,manifest)
@@ -204,7 +240,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                 evidence=evidence, error=metadata.get('error'), scope=scope,
                 handoff_path=handoff_path, usage=metadata['usage'],
                 metrics_path=str(out/'metrics.json'),usage_complete=metadata['usage_complete'],
-                backend='agy',requested_model=model,budget_job_id=job,
+                backend='agy',requested_model=model,effective_model=metadata.get('effective_model'),attempts=metadata.get('attempts',[]),budget_job_id=job,
                 report_path=str(out/'report.txt'))
     write_private(out/'report.json', compact_json(report)+'\n')
     write_private(out/'report.txt', format_report(report)+'\n')
@@ -240,8 +276,7 @@ def main() -> int:
     parser.add_argument('--encoding',action='append',default=[],metavar='PATH=CODEC',
                         help='override automatic source encoding detection for a file, repeatable')
     parser.add_argument('--include-untracked',action='store_true',help='include non-ignored untracked files; review export disclosure')
-    parser.add_argument('--deep',action='store_true',help='use the configured deep exploration model')
-    parser.add_argument('--model',help='explicit AGY model slug; no automatic fallback')
+    parser.add_argument('--model',help='AGY model override; the configured quota fallback order applies to listed models')
     parser.add_argument('--config',type=Path,help='kit agy.toml path, not AGY global settings')
     parser.add_argument('--agy',help='Antigravity CLI executable path')
     parser.add_argument('--timeout',type=float,help='optional local deadline in seconds; otherwise use AGY native timeout')

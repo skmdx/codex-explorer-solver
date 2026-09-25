@@ -26,6 +26,8 @@ mcp = FastMCP("explore-solve")
 def catalog(run: Path) -> dict:
     report = json.loads((run/'report.json').read_text())
     result = {k: report[k] for k in ('status', 'error', 'handoff_status', 'usage')}
+    result['effective_model'] = report.get('effective_model')
+    result['attempts'] = [{k:a[k] for k in ('model','error')} for a in report.get('attempts',[])]
     result['run_dir'] = str(run)
     evidence = report.get('evidence')
     result['locations'] = []
@@ -49,10 +51,10 @@ async def collect(
     scope: list[str], navigation: dict | None,
     known_findings: str,
     paths: list[str] | None = None, include_untracked: bool = False,
-    model: str | None = None, deep: bool = False,
+    model: str | None = None,
     encodings: dict[str, str] | None = None,
 ) -> dict:
-    """Collect missing source evidence through Gemini High and wait for completion.
+    """Collect source evidence through Sonnet, falling back to Gemini Flash High on usage limits, and wait for completion.
 
     Call this tool directly. The host exposes this namespace as direct-only,
     outside code-mode cells. One call waits for completion without a poll handle.
@@ -72,9 +74,9 @@ async def collect(
     Use navigation=null only when there is no useful symbol seed. known_findings
     carries relevant prior observations (empty string for a new investigation).
     paths selects Reader input files, including Git hooks and external files;
-    use scope=[], navigation=null and no deep/include_untracked with paths.
+    use scope=[], navigation=null and no include_untracked with paths.
     With no scope filter, include_untracked adds non-ignored untracked files.
-    model overrides the configured model; deep selects the configured deep model.
+    model overrides the configured model.
     Encodings are detected per file; encodings={path: codec} corrects known mistakes.
     """
     root = Path(repo).resolve(strict=True)
@@ -105,8 +107,6 @@ async def collect(
         argv.append('--include-untracked')
     if model is not None:
         argv.extend(['--model',model])
-    if deep:
-        argv.append('--deep')
     for path, encoding in (encodings or {}).items():
         argv.extend(['--encoding',f'{path}={encoding}'])
     if navigation is not None:

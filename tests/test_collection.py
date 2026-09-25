@@ -60,7 +60,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_untracked_and_model_options_reach_collection(self):
         (self.repo/'src/new.py').write_text('new = 1\n')
-        result=await self.run_collection(include_untracked=True,deep=True,model='gemini-custom-model')
+        result=await self.run_collection(include_untracked=True,model='gemini-custom-model')
         self.assertEqual(result['status'],'validated',result)
         run=Path(result['run_dir'])
         manifest=json.loads((run/'source-manifest.json').read_text())

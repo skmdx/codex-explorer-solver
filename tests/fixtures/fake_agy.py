@@ -15,7 +15,6 @@ assert '--dangerously-skip-permissions' in args
 assert args[args.index('--mode')+1]==('accept-edits' if agent=='es-editor' else 'plan')
 assert '--continue' not in args and '-p' not in args
 if '--conversation' in args:
-    assert agent == 'es-reviewer'
     assert args[args.index('--conversation')+1] == 'fixture-1'
 assert args[args.index('--input-format')+1]=='stream-json'
 lines=sys.stdin.buffer.readlines();assert len(lines)==1
@@ -97,6 +96,7 @@ if case=='blocked':wire.update(references=[],unresolved=['Fixture permission den
 # Per-step usage deliberately duplicates the terminal counters: must not be added.
 emit({'event':'step_update','step_update':{'step_type':'agent_response','state':'DONE','step_index':99,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}})
 usage={'input_tokens':100,'output_tokens':30,'thinking_tokens':10,'cache_read_tokens':70,'total_tokens':130}
+if '--conversation' in args: usage.update(review_usage())
 if case=='no_usage':usage=None
 if case=='bad_usage':usage['input_tokens']=True
 if case=='large_cache':usage['cache_read_tokens']=1000

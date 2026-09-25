@@ -43,7 +43,7 @@ def connect(state: Path) -> sqlite3.Connection:
 
 
 def reserve(state: Path, root: Path, role: str, task: bytes) -> str:
-    if role not in {'repo_explorer','repo_reader','repo_deep_explorer'}:
+    if role not in {'repo_explorer','repo_reader'}:
         raise EvidenceError('unknown budget role')
     c=connect(state)
     try:

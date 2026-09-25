@@ -163,10 +163,10 @@ class BudgetTests(unittest.TestCase):
         self.assertIsNone(budget.status(self.state)['total_worker_tokens'])
         self.assertEqual(budget.status(self.state)['observed_tokens_lower_bound'],100)
     def test_deep_can_run_first_and_repeat(self):
-        for _ in range(3):self.finish(self.reserve('repo_deep_explorer'))
+        for _ in range(3):self.finish(self.reserve('repo_reader'))
         self.assertEqual(budget.status(self.state)['attempts'],3)
     def test_deep_after_low_allowed(self):
-        self.finish(self.reserve());self.finish(self.reserve('repo_deep_explorer'))
+        self.finish(self.reserve());self.finish(self.reserve('repo_reader'))
         self.assertEqual(budget.status(self.state)['total_worker_tokens'],200)
     def test_finish_cannot_refund_or_repeat(self):
         j=self.reserve();self.finish(j)
@@ -186,7 +186,7 @@ class BudgetTests(unittest.TestCase):
             policy=json.loads(c.execute('SELECT data FROM policy').fetchone()[0])
             policy.update(max_calls=2,soft_token_limit=10,allow_unknown=False)
             c.execute('UPDATE policy SET data=?',(json.dumps(policy),))
-        for _ in range(25):self.finish(self.reserve('repo_deep_explorer'))
+        for _ in range(25):self.finish(self.reserve('repo_reader'))
         self.assertEqual(budget.status(self.state)['total_worker_tokens'],2500)
     def test_budget_not_created_in_repo(self):
         with self.assertRaises(EvidenceError):budget.initialize(self.root/'state',self.root,b'task')

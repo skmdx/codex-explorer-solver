@@ -97,7 +97,7 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
     git = await asyncio.create_subprocess_exec('git', 'init', '-q', str(workspace))
     if await git.wait():
         raise RuntimeError('could not initialize AGY runtime repository')
-    selected_model: str = model or CONFIG['explorer_model']
+    selected_model: str = model or CONFIG['subagent_model']
     order = CONFIG['review_model_order']
     candidates: list[str] = order[order.index(selected_model):] if mode == 'review' and selected_model in order else [selected_model]
     if root:
