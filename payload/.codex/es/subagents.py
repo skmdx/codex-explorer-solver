@@ -118,7 +118,8 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
             'Continue the original task from the existing conversation. The previous model became unavailable.'
             if conversation_id else task}})+'\n')
         report = await run_attempt(candidate, mode, agent, root, workspace, attempt_request,
-                                   attempt_dir, remaining, conversation_id)
+                                   attempt_dir, remaining, conversation_id,
+                                   attempts[-1]['error'] if conversation_id and attempts else None)
         conversation_id = report['conversation_id'] or conversation_id
         attempts.append({key: report[key] for key in
                          ('model','status','error','usage','run_dir','conversation_id','resumed_from')})
@@ -145,7 +146,7 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
 
 async def run_attempt(model: str, mode: str, agent: str, root: Path | None, workspace: Path,
                       request_path: Path, out: Path, timeout: float,
-                      conversation_id: str | None = None) -> dict:
+                      conversation_id: str | None = None, previous_error: str | None = None) -> dict:
     argv = agy.command(CONFIG['executable'], model, agent, None, timeout)
     if conversation_id:
         argv += ['--conversation', conversation_id]
@@ -172,6 +173,7 @@ async def run_attempt(model: str, mode: str, agent: str, root: Path | None, work
     with (out/'events.jsonl').open('rb') as stream:
         for line in stream:
             state.feed(line)
+    state.recover_inherited_error(previous_error, proc.returncode)
     result = state.result or {}
     response = result.get('response', '')
     error = state.error or result.get('error')

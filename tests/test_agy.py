@@ -79,6 +79,22 @@ class TransportTests(unittest.TestCase):
         argv=backend.command('agy','gemini-3.8-flash-medium','es-explorer',Path('/schema'),None)
         self.assertNotIn('--print-timeout',argv)
 
+    def test_inherited_error_requires_completed_error_free_resume(self):
+        for finished, turn_error, prior, code, expected in [
+                (True,False,'quota',0,'SUCCESS'),
+                (False,False,'quota',0,'ERROR'),
+                (True,True,'quota',0,'ERROR'),
+                (True,False,None,0,'ERROR'),
+                (True,False,'other quota',0,'ERROR'),
+                (True,False,'quota',1,'ERROR')]:
+            with self.subTest(finished=finished,turn_error=turn_error,prior=prior,code=code):
+                s=self.state(); self.init(s)
+                for kind in (['error_message'] if turn_error else []) + (['finish'] if finished else []):
+                    s.feed(json.dumps({'event':'step_update','step_update':{'step_type':kind,'state':'DONE'}}).encode())
+                s.feed(b'{"event":"result","result":{"status":"ERROR","error":"quota","num_turns":2}}')
+                s.recover_inherited_error(prior,code)
+                self.assertEqual(s.result['status'],expected)
+
 class SnapshotTests(Fixture):
     def test_uses_uncommitted_worktree_bytes(self):
         (self.repo/'src/example.py').write_text('def f():\n    return 5\n');m=self.export()
@@ -477,6 +493,18 @@ if __name__=='__main__':unittest.main()
 
 
 class CollectionFallbackTests(Fixture):
+    def test_completed_resume_with_inherited_quota_is_validated(self):
+        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({
+                'claude-sonnet-4-6':'quota', 'gemini-3.8-flash-high':'inherited_quota'})}):
+            proc=self.invoke()
+        self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+        report=json.loads(proc.stdout)
+        self.assertEqual(report['status'],'validated')
+        self.assertEqual(len(report['attempts']),2)
+        self.assertIsNone(report['attempts'][-1]['error'])
+        result=json.loads((self.base/'run/result.json').read_text())
+        self.assertIn('quota',result['inherited_error'])
+
     def test_quota_resumes_collection_on_flash(self):
         with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'quota_after_progress'})}):
             proc=self.invoke()

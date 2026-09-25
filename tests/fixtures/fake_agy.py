@@ -21,7 +21,11 @@ lines=sys.stdin.buffer.readlines();assert len(lines)==1
 message=json.loads(lines[0]);assert message['event']=='user'
 text=message['message']['content'];case=os.getenv('FAKE_CASE','ok')
 case=json.loads(os.getenv('FAKE_MODEL_CASES','{}')).get(model,case)
-def emit(value):print(json.dumps(value),flush=True)
+def emit(value):
+    if case=='inherited_quota' and value.get('event')=='result':
+        print(json.dumps({'event':'step_update','step_update':{'step_type':'finish','state':'DONE','step_index':100}}),flush=True)
+        value['result'].update(status='ERROR',error='Individual quota reached. Resets later.')
+    print(json.dumps(value),flush=True)
 if case=='model_unavailable':
     emit({'event':'result','result':{'status':'ERROR','error':'Unknown model','num_turns':0}});sys.exit(1)
 tools=['finish'] if agent=='es-reader' else ['view_file','grep_search','finish']

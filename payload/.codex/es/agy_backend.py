@@ -48,6 +48,7 @@ class StreamState:
         self.step_ids: set[int] = set(); self.unknown_events = 0
         self.conversation_id = None; self.permission_mode = None
         self.error: str | None = None
+        self.finished = False; self.turn_error = False
 
     def feed(self, raw: bytes) -> None:
         if not raw.strip(): return
@@ -76,6 +77,8 @@ class StreamState:
                 cid = step.get('conversation_id')
                 if cid and self.conversation_id and cid != self.conversation_id:
                     raise EvidenceError('unexpected second conversation')
+                if step.get('step_type') == 'error_message': self.turn_error = True
+                if step.get('step_type') == 'finish' and step.get('state') == 'DONE': self.finished = True
                 if step.get('step_type') == 'tool':
                     tool = step.get('tool_name')
                     if tool not in self.allowed_tools: raise EvidenceError('disallowed tool step')
@@ -99,6 +102,15 @@ class StreamState:
                     raise EvidenceError('invalid provider turn count')
         except (ValueError, UnicodeError, RecursionError) as exc:
             self.error = str(exc)
+
+    def recover_inherited_error(self, previous_error: str | None, exit_code: int | None) -> None:
+        # AGY can retain the previous turn's quota error after a resumed turn finishes.
+        result = self.result or {}
+        if (previous_error and exit_code == 0 and not self.error and not self.turn_error
+                and self.finished and result.get('status') == 'ERROR'
+                and result.get('error') == previous_error):
+            result['inherited_error'] = result.pop('error')
+            result['status'] = 'SUCCESS'
 
     def usage(self) -> dict:
         raw = self.result.get('usage') if self.result else None

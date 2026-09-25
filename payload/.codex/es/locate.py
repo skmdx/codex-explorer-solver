@@ -171,6 +171,8 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             metadata['status'] = 'running'
             stream_state = agy.StreamState(candidate, agent, tools)
             process_code, reason, _ = agy.supervise(argv,out/'workspace',attempt_out,remaining,stream_state)
+            stream_state.recover_inherited_error(
+                attempts[-1]['error'] if conversation_id and attempts else None, process_code)
             conversation_id = stream_state.conversation_id or conversation_id
             result = stream_state.result or {}
             error = result.get('error') or (attempt_out/'stderr.log').read_text(errors='replace')

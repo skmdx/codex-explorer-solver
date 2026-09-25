@@ -125,6 +125,14 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         for attempt in result['attempts']:
             self.assertTrue((Path(attempt['run_dir'])/'events.jsonl').exists())
 
+    async def test_finished_resume_with_inherited_quota_is_completed(self):
+        opus, pro, _ = subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'quota',pro:'inherited_quota'})
+        result = await self.run_task(model=opus)
+        self.assertEqual(result['status'],'completed',result)
+        self.assertEqual(result['model'],pro)
+        self.assertEqual(len(result['attempts']),2)
+
     async def test_startup_unavailability_starts_next_model_with_original_task(self):
         opus, pro, _ = subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'model_unavailable'})
