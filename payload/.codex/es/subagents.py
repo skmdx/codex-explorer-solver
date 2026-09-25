@@ -23,6 +23,8 @@ import agy_backend as agy
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
+AGENT_DEFINITIONS = {name: (HERE/'agy_agents'/f'{name}.md').read_bytes()
+                     for name in ('es-reviewer', 'es-editor')}
 mcp = FastMCP('agy-subagents')
 REVIEW_TOOLS = ['view_file', 'grep_search', 'finish']
 EDIT_TOOLS = REVIEW_TOOLS + ['find_by_name', 'list_dir', 'run_command',
@@ -91,7 +93,7 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
     definitions = workspace/'.agents/agents'
     definitions.mkdir(parents=True)
     agent = 'es-reviewer' if mode == 'review' else 'es-editor'
-    (definitions/f'{agent}.md').write_bytes((HERE/'agy_agents'/f'{agent}.md').read_bytes())
+    (definitions/f'{agent}.md').write_bytes(AGENT_DEFINITIONS[agent])
     git = await asyncio.create_subprocess_exec('git', 'init', '-q', str(workspace))
     if await git.wait():
         raise RuntimeError('could not initialize AGY runtime repository')

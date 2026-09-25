@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -201,6 +202,27 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result['model'],flash)
                 self.assertEqual(len(result['attempts']),3)
                 self.assertIn('Verified checkpoint',result['response'])
+
+    async def test_running_mcp_survives_removal_of_its_plugin_cache(self):
+        cached=self.root/'old-plugin'
+        shutil.copytree(KIT/'payload/.codex/es',cached)
+        bin_dir=self.root/'bin';bin_dir.mkdir()
+        (bin_dir/'agy').symlink_to(KIT/'tests/fixtures/fake_agy.py')
+        env=dict(os.environ,PATH=str(bin_dir)+os.pathsep+os.environ['PATH'])
+        params=StdioServerParameters(command=sys.executable,args=[str(cached/'subagents.py')],env=env)
+        async with stdio_client(params) as (read,write):
+            async with ClientSession(read,write) as session:
+                await session.initialize()
+                shutil.rmtree(cached)
+                for mode in ('review','edit'):
+                    reply=await session.call_tool('run',dict(task='Use the supplied repository.',
+                        scratch_dir=str(self.root),repo=str(self.repo),mode=mode))
+                    self.assertFalse(reply.isError,reply)
+                    result=json.loads(reply.content[0].text)
+                    self.assertEqual(result['status'],'completed',result)
+                    agent='es-reviewer' if mode=='review' else 'es-editor'
+                    definition=Path(result['run_dir'])/'workspace/.agents/agents'/f'{agent}.md'
+                    self.assertEqual(definition.read_bytes(),subagents.AGENT_DEFINITIONS[agent])
 
 
 if __name__ == '__main__': unittest.main()
