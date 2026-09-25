@@ -16,7 +16,7 @@ import tomllib
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from evidence import format_evidence, load_handoff, verify_handoff
+from evidence import evidence_blocks, format_evidence, load_handoff, verify_handoff
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
@@ -60,7 +60,8 @@ async def collect(
     question is the next Solver decision, evidence_needed names the code facts
     needed for it (definitions, conditions, updates, callers), not a whole issue.
     Pass known Symbols results directly as navigation={root: LSP workspacePath,
-    queries: [{tool, args, result/error}]}.
+    queries: [{tool, args, result/error}]}. result is the unchanged MCP response,
+    including structuredContent. Include prior read_symbols results to reuse read ranges.
     scope selects repository-relative files/directories or globs (e.g. src/**/*.c).
     * and ? stay within a path component; ** spans directories. [] selects all.
     Explicit scopes include ignored/untracked files and nested repositories.
@@ -132,7 +133,9 @@ def read_evidence(run_dir: str, ids: list[int], offset: int | None = None,
     """Read selected original-source IDs from collect, checking current hashes.
 
     Output is paginated, never silently truncated: repeat the same IDs to continue
-    from the last delivered offset. Already completed selections return no source.
+    from the last delivered offset. Completed source ranges are reused across ID
+    selections and matching Symbols readSources receipts. Source blocks preserve
+    whitespace and line endings, with range labels outside the body for patching.
     Explicit offset=0 rereads after context loss. Select just the evidence needed.
     Reuse returned source; do not reread those ranges with shell tools. Increase max_chars
     if the client can display more. All evidence remains saved in run_dir.
@@ -149,19 +152,57 @@ def read_evidence(run_dir: str, ids: list[int], offset: int | None = None,
             raise ValueError(f'unknown evidence ID {i}')
         category,item = entries[i-1]
         selected[category].append(item)
-    verified = verify_handoff(Path(metadata['repo']), selected, include_source=True)
-    source = format_evidence(verified)
-    offsets_path = run/'read_offsets.json'
-    offsets: dict[str, int] = json.loads(offsets_path.read_text()) if offsets_path.exists() else {}
+    state_path = run/'read_state.json'
+    state = json.loads(state_path.read_text()) if state_path.exists() else {
+        'read': navigation_read_ranges(run, Path(metadata['repo'])), 'selections': {}}
     key = ','.join(map(str,sorted(set(ids))))
+    selections = state['selections']
+    new_selection = key not in selections or offset == 0
+    verified = verify_handoff(Path(metadata['repo']), selected, include_source=new_selection)
+    if new_selection:
+        blocks = evidence_blocks(verified, [] if offset == 0 else state['read'])
+        selections[key] = dict(text=format_evidence(verified, blocks), offset=0, covered=0,
+                               ranges=[{k:v for k,v in block.items() if k != 'source'} for block in blocks])
+    selection = selections[key]
+    source = selection['text']
     if offset is None:
-        offset = offsets.get(key,0)
+        offset = selection['offset']
+    if offset > len(source):
+        raise ValueError('offset exceeds the selected output')
     end = min(offset+max_chars, len(source))
-    offsets[key] = end
-    offsets_path.write_text(json.dumps(offsets))
+    selection['offset'] = end
+    if offset <= selection['covered']:
+        selection['covered'] = max(selection['covered'], end)
+    if selection['covered'] == len(source):
+        for receipt in selection['ranges']:
+            if receipt not in state['read']:
+                state['read'].append(receipt)
+    state_path.write_text(json.dumps(state, ensure_ascii=False))
     return dict(ids=ids, offset=offset, already_returned=offset==len(source),
                 text=source[offset:end], next_offset=end if end < len(source) else None,
                 total_chars=len(source), complete=end==len(source))
+
+
+def navigation_read_ranges(run: Path, root: Path) -> list[dict]:
+    navigation_path = run/'navigation.json'
+    if not navigation_path.exists():
+        return []
+    navigation = json.loads(navigation_path.read_text())
+    manifest = json.loads((run/'source-manifest.json').read_text())
+    files = {str(root/entry['path']): entry for entry in manifest['files']}
+    ranges = []
+    for query in navigation['queries']:
+        result = query.get('result', {})
+        if result.get('isError'):
+            continue
+        for receipt in result.get('structuredContent', {}).get('readSources', []):
+            entry = files.get(receipt['path'])
+            if entry is None or receipt['contentSha256'] != entry['export_sha256']:
+                continue
+            start, end = receipt['range']['start'], receipt['range']['end']
+            ranges.append(dict(path=entry['path'], sha256=entry['sha256'], encoding=entry['encoding'],
+                               start=start['line'], end=end['line'] - (end['character'] == 1)))
+    return ranges
 
 
 if __name__ == '__main__':

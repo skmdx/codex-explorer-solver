@@ -45,11 +45,11 @@ class EvidenceTests(unittest.TestCase):
                               dict(self.site,start=5,end=5,evidence='Separate range')]
         report=verify_handoff(self.root,self.data,include_source=True)
         rendered=format_evidence(report)
-        self.assertEqual(rendered.count('2:     return normalize(x)'),1)
+        self.assertEqual(rendered.count('    return normalize(x)'),1)
         self.assertIn('Second observation',rendered)
         self.assertIn('Calls normalize before returning.',rendered)
-        self.assertIn('5:     return x.strip()',rendered)
-        self.assertIn('2:     return normalize(x)\n...\n5:',rendered)
+        self.assertIn('    return x.strip()',rendered)
+        self.assertIn('Source src/router.py:5-5\n    return x.strip()\n',rendered)
         self.assertNotIn('3: ',rendered)
         self.assertNotIn(self.site['sha256'],rendered)
 
@@ -68,8 +68,8 @@ class EvidenceTests(unittest.TestCase):
         self.data['related']=[dict(self.site,start=4,end=5,symbol='normalize')]
         r=self.show();self.assertEqual(r.returncode,0,r.stderr)
         report=json.loads(r.stdout)
-        self.assertEqual(report['primary'][0]['source'],'1: def route(x):\n2:     return normalize(x)')
-        self.assertEqual(report['related'][0]['source'],'4: def normalize(x):\n5:     return x.strip()')
+        self.assertEqual(report['primary'][0]['source'],'def route(x):\n    return normalize(x)\n')
+        self.assertEqual(report['related'][0]['source'],'def normalize(x):\n    return x.strip()\n')
         self.assertEqual(report['unresolved'],['Find caller'])
         self.assertFalse(report['semantic_relevance_verified'])
 
@@ -87,8 +87,8 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(verify_handoff(self.root,self.data)['ok'])
         r=self.show();self.assertEqual(r.returncode,0,r.stderr)
         report=json.loads(r.stdout)
-        self.assertEqual(report['primary'][0]['source'],'1: '+'x'*9000)
-        self.assertEqual(report['related'][0]['source'],'2: '+'y'*9000)
+        self.assertEqual(report['primary'][0]['source'],'x'*9000+'\n')
+        self.assertEqual(report['related'][0]['source'],'y'*9000+'\n')
 
     def test_stale_same_head(self):
         (self.root / 'src/router.py').write_bytes(self.raw + b'# uncommitted change\n')
@@ -142,7 +142,7 @@ class EvidenceTests(unittest.TestCase):
         report = json.loads(r.stdout)
         self.assertEqual(len(report['primary']) + len(report['related']), 8)
         self.assertEqual(report['unresolved'], self.data['unresolved'])
-        self.assertTrue(all(ref['source'] == '1: def route(x):\n2:     return normalize(x)'
+        self.assertTrue(all(ref['source'] == 'def route(x):\n    return normalize(x)\n'
                             for group in ('primary', 'related') for ref in report[group]))
 
     def test_same_source_can_support_multiple_findings(self):
@@ -154,7 +154,7 @@ class EvidenceTests(unittest.TestCase):
     def test_overlapping_locations(self):
         self.data['related'] = [dict(self.site, start=2, end=3)]
         report = verify_handoff(self.root, self.data, include_source=True)
-        self.assertEqual(report['related'][0]['source'], '2:     return normalize(x)\n3: ')
+        self.assertEqual(report['related'][0]['source'], '    return normalize(x)\n\n')
 
     def test_long_multiline_explanation_and_symbol(self):
         self.site.update(symbol='qualified_symbol_'*30, evidence='observed fact\n'*80)
@@ -168,7 +168,7 @@ class EvidenceTests(unittest.TestCase):
         p.write_bytes(self.raw)
         self.site['path'] = relative
         self.assertEqual(verify_handoff(self.root, self.data, include_source=True)['primary'][0]['source'],
-                         '1: def route(x):\n2:     return normalize(x)')
+                         'def route(x):\n    return normalize(x)\n')
 
     def test_unknown_fields(self):
         self.site['patch'] = 'not permitted'

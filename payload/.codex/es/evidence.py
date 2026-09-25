@@ -138,20 +138,29 @@ def read_range(root: Path, relative: str, start: int, end: int,
 
 def _render_range(relative: str, lines: list[str], digest: str, start: int, end: int,
                   expected: str | None) -> dict[str, Any]:
+    _check_range(relative, lines, digest, start, end, expected)
+    return {"path": relative, "start": start, "end": end, "sha256": digest,
+            "source": "\n".join(f"{i}: {lines[i-1]}" for i in range(start, end + 1))}
+
+
+def _check_range(relative: str, lines: list[str], digest: str, start: int, end: int,
+                 expected: str | None) -> None:
     if type(start) is not int or type(end) is not int or not (1 <= start <= end):
         raise EvidenceError("invalid 1-based inclusive range")
     if expected is not None and digest != expected:
         raise EvidenceError(f"stale_source: {relative}; re-localize the symbol in this file")
     if end > len(lines):
         raise EvidenceError(f"range exceeds {len(lines)} lines in {relative}")
-    result = {"path": relative, "start": start, "end": end, "sha256": digest,
-              "source": "\n".join(f"{i}: {lines[i-1]}" for i in range(start, end + 1))}
-    return result
+
+
+def _exact_lines(text: str) -> list[str]:
+    lines = text.split('\n')
+    return [line+'\n' for line in lines[:-1]] + ([lines[-1]] if lines[-1] else [])
 
 
 def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = False) -> dict[str, Any]:
     validate_shape(data)
-    sources: dict[tuple[str, str], tuple[list[str], str]] = {}
+    sources: dict[tuple[str, str], tuple[list[str], str, list[str]]] = {}
     result: dict[str, Any] = {"ok": True, "status": collection_status(data),
         "locations": len(data["primary"]) + len(data["related"]),
         "semantic_relevance_verified": False}
@@ -162,11 +171,12 @@ def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = F
             key = (path, item["encoding"])
             if key not in sources:
                 raw, lines, _ = source_bytes(root, *key)
-                sources[key] = (lines, hashlib.sha256(raw).hexdigest())
-            lines, digest = sources[key]
-            excerpt = _render_range(path, lines, digest, item["start"], item["end"], item["sha256"])
+                exact_lines = _exact_lines(raw.decode(item['encoding'])) if include_source else []
+                sources[key] = (lines, hashlib.sha256(raw).hexdigest(), exact_lines)
+            lines, digest, exact_lines = sources[key]
+            _check_range(path, lines, digest, item["start"], item["end"], item["sha256"])
             if include_source:
-                excerpts.append(dict(item, source=excerpt["source"]))
+                excerpts.append(dict(item, source=''.join(exact_lines[item['start']-1:item['end']])))
         if include_source:
             result[category] = excerpts
     if include_source:
@@ -174,28 +184,41 @@ def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = F
     return result
 
 
-def format_evidence(data: dict[str, Any]) -> str:
-    """Render verified excerpts, displaying overlapping source lines once."""
-    files: dict[tuple[str, str, str], dict[str, Any]] = {}
+def evidence_blocks(data: dict[str, Any], read_ranges: list[dict] | None = None) -> list[dict]:
+    """Merge overlapping excerpts and subtract already delivered lines of this version."""
+    files: dict[tuple[str, str, str], dict[int, str]] = {}
     for category in ("primary", "related"):
         for item in data[category]:
             key = (item['path'], item['sha256'], item['encoding'])
-            entry = files.setdefault(key, dict(facts=[], lines={}))
-            fact = f"{item['start']}-{item['end']} {item['symbol']}: {item['evidence']}"
-            if fact not in entry['facts']:
-                entry['facts'].append(fact)
-            entry['lines'].update(enumerate(item['source'].split('\n'), item['start']))
-    sections = []
-    for (path, _, _), entry in files.items():
-        source = []
-        previous = None
-        for number, line in sorted(entry['lines'].items()):
-            if previous is not None and number > previous + 1:
-                source.append('...')
-            source.append(line)
-            previous = number
-        sections.append('\n'.join([path, *entry['facts'], '',
-                                   *source]))
+            entry = files.setdefault(key, {})
+            entry.update(enumerate(_exact_lines(item['source']), item['start']))
+    blocks = []
+    for (path, digest, encoding), entry in files.items():
+        known = [r for r in read_ranges or [] if (r['path'], r['sha256'], r['encoding']) == (path, digest, encoding)]
+        block = None
+        for number, line in sorted(entry.items()):
+            if any(r['start'] <= number <= r['end'] for r in known):
+                continue
+            if block is None or number != block['end'] + 1:
+                block = dict(path=path, sha256=digest, encoding=encoding,
+                             start=number, end=number, source=[line])
+                blocks.append(block)
+            else:
+                block['end'] = number
+                block['source'].append(line)
+    for block in blocks:
+        block['source'] = ''.join(block['source'])
+    return blocks
+
+
+def format_evidence(data: dict[str, Any], blocks: list[dict] | None = None) -> str:
+    """Keep range labels outside unchanged, contiguous source blocks."""
+    if blocks is None:
+        blocks = evidence_blocks(data)
+    facts = dict.fromkeys(f"{item['path']}:{item['start']}-{item['end']} {item['symbol']}: {item['evidence']}"
+                         for category in ('primary', 'related') for item in data[category])
+    sections = list(facts)
+    sections.extend(f"Source {block['path']}:{block['start']}-{block['end']}\n{block['source']}" for block in blocks)
     if data.get('unresolved'):
         sections.append('Unresolved:\n' + '\n'.join(data['unresolved']))
     return '\n\n'.join(sections)

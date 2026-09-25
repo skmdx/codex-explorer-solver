@@ -33,14 +33,27 @@ Example direct `collect` arguments after a Symbols query:
     "queries": [{
       "tool": "references",
       "args": {"file": "/absolute/repo/src/file.c", "line": 120, "character": 5},
-      "result": {"locations": [{"path": "src/file.c", "line": 160}]}
+      "result": {
+        "content": [{"type": "text", "text": "Showing 1-1 of 1.\nFound 1 reference(s) across 1 file\n\nsrc/file.c (1 references)\n  @160:5 symbol"}],
+        "structuredContent": {
+          "locations": [{"path": "/absolute/repo/src/file.c", "range": {
+            "start": {"line": 160, "character": 5}, "end": {"line": 160, "character": 10}
+          }}],
+          "page": {"offset": 0, "limit": 100, "total": 1, "nextOffset": null}
+        }
+      }
     }]
   },
   "known_findings": "The completion carries a saved version."
 }
 ```
 
-Pass the relevant locations already returned by Symbols. Do not repeat an LSP
+Pass the actual MCP response as `result`, without rebuilding this example by hand.
+The host sends only `structuredContent` to Gemini, remapping location paths while
+keeping names, page metadata and errors unchanged. Text-only results need the
+updated Symbols server. Include existing `read_symbols` results in `queries`:
+their full-line receipts avoid returning the same version of source again.
+Do not repeat an LSP
 query just to fill `navigation`. Errors remain unavailable results, not empty reference lists.
 `scope` covers the question's source area; LSP hits are starting points, not an
 exhaustive export filter. Without a useful symbol seed, pass `navigation: null`.
@@ -56,10 +69,15 @@ Use an empty `known_findings` only for a new investigation.
 `collect` returns `run_dir`, indexed locations, short observations and unresolved
 questions. These observations are leads, not verified semantic conclusions.
 Call `read_evidence(run_dir, ids)` for the locations needed now. It checks source
-hashes and combines overlapping lines. For large selections, repeat the same IDs
+hashes and combines overlapping lines. Bodies preserve indentation, line endings
+and the final newline; range labels stay outside each contiguous body so it can
+be used as `apply_patch` context. For large selections, repeat the same IDs
 without an offset: each call returns the next page until `complete` is true.
 `next_offset` reports where that next page starts.
-Completed selections return no duplicate source; explicit `offset: 0` rereads after
+Completed ranges are reused across different ID selections and from matching
+Symbols receipts. New observations are still returned. In-progress pages retain
+stable offsets; their ranges count as read only after the full selection is delivered.
+Explicit `offset: 0` rereads after
 context loss. `max_chars` is the response page size, not an
 evidence limit. Keep using returned originals instead of rereading them with sed.
 

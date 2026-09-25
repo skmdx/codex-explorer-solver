@@ -95,7 +95,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('unsupported',request)
         self.assertIn('The source is src/example.py.',request)
         full=read_evidence(str(run),[1])
-        self.assertIn('2:     return 1',full['text'])
+        self.assertIn('    return 1',full['text'])
         self.assertEqual(read_evidence(str(run),[1])['text'],'')
         parts=[];offset=0
         while True:
@@ -130,7 +130,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 args=dict(run_dir=index['run_dir'],ids=[1])
                 source=await session.call_tool('read_evidence',args)
                 self.assertFalse(source.isError)
-                self.assertIn('2:     return 1',json.loads(source.content[0].text)['text'])
+                self.assertIn('    return 1',json.loads(source.content[0].text)['text'])
                 repeated=await session.call_tool('read_evidence',args)
                 self.assertTrue(json.loads(repeated.content[0].text)['already_returned'])
 
@@ -171,6 +171,48 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         (self.repo/'src/example.py').write_text('changed\n')
         with self.assertRaises(EvidenceError):read_evidence(result['run_dir'],[1])
 
+    async def test_symbols_receipts_skip_only_matching_version_and_keep_patch_text(self):
+        raw = 'def f():\r\n    return "日本語😀"'.encode()
+        file = self.repo/'src/example.py'
+        file.write_bytes(raw)
+        receipt = {'path':str(file), 'contentSha256':hashlib.sha256(raw).hexdigest(),
+                   'range':{'start':{'line':1,'character':1},'end':{'line':2,'character':1}}}
+        nav = {'root':str(self.base),'queries':[{'tool':'read_symbols', 'result':{
+            'content':[{'type':'text','text':raw.decode()}],
+            'structuredContent':{'readSources':[receipt]}}}]}
+        result = await self.run_collection(navigation=nav)
+        page = read_evidence(result['run_dir'],[1])
+        self.assertNotIn('def f():',page['text'])
+        self.assertIn('    return "日本語😀"',page['text'])
+        replay = read_evidence(result['run_dir'],[1],offset=0)
+        self.assertIn(raw.decode(),replay['text'])
+        receipt['contentSha256'] = '0'*64
+        result = await self.run_collection(navigation=nav)
+        self.assertIn(raw.decode(),read_evidence(result['run_dir'],[1])['text'])
+
+    async def test_changed_id_selection_does_not_repeat_completed_source(self):
+        result = await self.run_collection(); run = Path(result['run_dir'])
+        handoff = json.loads((run/'handoff.json').read_text())
+        handoff['related'] = [dict(handoff['primary'][0],start=2,evidence='return value')]
+        (run/'handoff.json').write_text(json.dumps(handoff))
+        first = read_evidence(str(run),[2])
+        second = read_evidence(str(run),[1,2])
+        self.assertIn('    return 1',first['text'])
+        self.assertNotIn('    return 1',second['text'])
+        self.assertIn('def f():',second['text'])
+        self.assertIn('return value',second['text'])
+
+    async def test_partial_delivery_does_not_hide_unread_source_in_another_selection(self):
+        result = await self.run_collection(); run = Path(result['run_dir'])
+        handoff = json.loads((run/'handoff.json').read_text())
+        handoff['related'] = [dict(handoff['primary'][0],start=2)]
+        (run/'handoff.json').write_text(json.dumps(handoff))
+        read_evidence(str(run),[1],max_chars=5)
+        self.assertIn('    return 1',read_evidence(str(run),[2])['text'])
+        # The in-flight selection keeps stable offsets even after another read.
+        tail = read_evidence(str(run),[1])
+        self.assertIn('def f():\n    return 1\n',tail['text'])
+
     async def test_failed_collection_returns_error_without_retry(self):
         os.environ['FAKE_CASE']='auth'
         result=await self.run_collection()
@@ -184,7 +226,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         handoff['related']=[dict(handoff['primary'][0],start=2)]
         (run/'handoff.json').write_text(json.dumps(handoff))
         page=read_evidence(str(run),[1,2])
-        self.assertEqual(page['text'].count('2:     return 1'),1)
+        self.assertEqual(page['text'].count('    return 1'),1)
 
 
 if __name__=='__main__':unittest.main()

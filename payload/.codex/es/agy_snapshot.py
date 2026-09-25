@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from pathlib import Path, PurePosixPath
 import subprocess
 from typing import Any
@@ -113,27 +112,44 @@ def verify_export(root: Path, workspace: Path, manifest: dict) -> None:
 
 
 def export_navigation(navigation: dict, root: Path, source_root: Path, manifest: dict) -> dict:
-    """Map known original locations to exported files, including MCP text payloads."""
-    workspace = Path(navigation['root'])
+    """Translate structured locations only. Source and display text are not navigation."""
     paths = {}
     for entry in manifest['files']:
         original = root / entry['path']
         target = str(source_root / entry['export_path'])
         paths[str(original)] = target
         paths[original.as_uri()] = target
-        if original.is_relative_to(workspace):
-            paths[str(original.relative_to(workspace))] = target
-    pattern = re.compile(r'(?<![\w./-])(?:' + '|'.join(re.escape(p) for p in sorted(paths, key=len, reverse=True))
-                         + r')(?![\w./-])')
     def rewrite(value):
-        if isinstance(value, str):
-            return pattern.sub(lambda match: paths[match.group()], value)
         if isinstance(value, list):
             return [rewrite(item) for item in value]
         if isinstance(value, dict):
-            return {key: rewrite(item) for key, item in value.items()}
+            result = {}
+            for key, item in value.items():
+                if key in ('path', 'file') and isinstance(item, str):
+                    if key == 'file' and not Path(item).is_absolute():
+                        item = str(Path(navigation['root']) / item)
+                    result[key] = paths.get(item, item)
+                else:
+                    result[key] = rewrite(item)
+            return result
         return value
-    return {'root': str(source_root), 'queries': rewrite(navigation['queries'])}
+    queries = []
+    for query in navigation['queries']:
+        item = {'tool': query['tool']}
+        if 'args' in query:
+            item['args'] = rewrite(query['args'])
+        if 'error' in query:
+            item['error'] = query['error']
+        else:
+            result = query['result']
+            if result.get('isError'):
+                item['error'] = result.get('content', [])
+            else:
+                if 'structuredContent' not in result:
+                    raise EvidenceError('navigation requires the Symbols MCP result with structuredContent')
+                item['result'] = rewrite(result['structuredContent'])
+        queries.append(item)
+    return {'root': str(source_root), 'queries': queries}
 
 
 def bind_handoff(wire: Any, manifest: dict, source_root: Path) -> dict:

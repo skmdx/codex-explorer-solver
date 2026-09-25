@@ -245,17 +245,25 @@ class AgyRunnerTests(Fixture):
 
     def test_navigation_is_in_initial_prompt_without_narrowing_export(self):
         nav={'root':str(self.base),'queries':[
-            {'tool':'references','args':{'file':str(self.repo/'src/example.py'),'line':1,'character':5},
-             'result':{'content':[{'type':'text','text':'repo/src/example.py @1:5'}],
-                       'location':{'uri':(self.repo/'src/example.py').as_uri()}}},
+            {'tool':'references','args':{'file':'repo/src/example.py','line':1,'character':5},
+             'result':{'content':[{'type':'text','text':f'return "{self.repo}/src/example.py"'}],
+                       'structuredContent':{'locations':[{'path':str(self.repo/'src/example.py'),
+                             'range':{'start':{'line':1,'character':5},'end':{'line':1,'character':6}},
+                             'name':str(self.repo/'src/example.py')}],
+                             'page':{'offset':0,'limit':1,'total':3,'nextOffset':1}}}},
             {'tool':'call_hierarchy','error':'not supported'}]}
         path=self.base/'navigation.json';path.write_text(json.dumps(nav))
         r=self.invoke(extra=['--navigation-file',str(path)])
         self.assertEqual(r.returncode,0,r.stdout+r.stderr)
         request=json.loads((self.base/'run/request.jsonl').read_text())['message']['content']
-        self.assertIn(str(self.base/'run/sources/src/example.py')+' @1:5',request)
+        exported=json.loads(request.split('KNOWN LOCATIONS (missing files are outside this export):\n')[1].split('\nSOURCE ROOT:')[0])
+        data=exported['queries'][0]['result']
+        self.assertEqual(exported['queries'][0]['args']['file'],str(self.base/'run/sources/src/example.py'))
+        self.assertEqual(data['locations'][0]['path'],str(self.base/'run/sources/src/example.py'))
+        self.assertEqual(data['locations'][0]['name'],str(self.repo/'src/example.py'))
+        self.assertEqual(data['page']['nextOffset'],1)
+        self.assertNotIn('return',request)
         self.assertIn('not supported',request)
-        self.assertNotIn(str(self.repo/'src/example.py'),request)
         self.assertNotIn((self.repo/'src/example.py').as_uri(),request)
         self.assertEqual(json.loads((self.base/'run/navigation.json').read_text()),nav)
         self.assertEqual(json.loads(r.stdout)['scope']['file_count'],2)
@@ -273,11 +281,11 @@ class AgyRunnerTests(Fixture):
         r=self.invoke(json_output=False)
         self.assertEqual(r.returncode,0,r.stdout+r.stderr)
         self.assertIn('AGY: validated',r.stdout)
-        self.assertIn('1: def f():',r.stdout)
+        self.assertIn('def f():',r.stdout)
         self.assertEqual(r.stdout,(self.base/'run/report.txt').read_text())
         report=json.loads((self.base/'run/report.json').read_text())
         self.assertEqual(report['usage']['total_tokens'],130)
-        self.assertEqual(report['evidence']['primary'][0]['source'],'1: def f():\n2:     return 1')
+        self.assertEqual(report['evidence']['primary'][0]['source'],'def f():\n    return 1\n')
     def test_default_failure_report(self):
         r=self.invoke('auth',json_output=False)
         self.assertNotEqual(r.returncode,0)
@@ -316,7 +324,7 @@ class AgyRunnerTests(Fixture):
     def test_reader_returns_verified_citations_without_source_in_argv(self):
         r=self.invoke(extra=['--mode','reader','--path','src/example.py']);self.assertEqual(r.returncode,0,r.stderr+r.stdout)
         evidence=json.loads(r.stdout)['evidence']
-        self.assertEqual(evidence['primary'][0]['source'],'1: def f():\n2:     return 1')
+        self.assertEqual(evidence['primary'][0]['source'],'def f():\n    return 1\n')
         self.assertFalse(evidence['semantic_relevance_verified'])
         self.assertNotIn('return 1',json.dumps(self.metrics()['argv']))
         self.assertIn('return 1',(self.base/'run/request.jsonl').read_text())
