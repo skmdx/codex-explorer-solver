@@ -8,6 +8,7 @@ Explorerからは関連するファイルと行番号を受け取り、Codexが�
 場所が分からないだけで毎回Explorerを起動することはありません。
 
 収集はSonnet 4.6を優先し、利用量上限時のみGemini Flash Highへ会話を引き継ぎます。期限は全試行で共有します。
+返された参照のパス・行範囲・形式が不正な場合は、検証エラーと却下した参照をAGYへ返し、同じ会話で最大2回修正を求めます。修正でも収集全体の期限を共有し、上限到達時は最後の検証エラーを返します。ソース改変や実行失敗は修正依頼の対象外です。
 
 ## 使い方
 
@@ -102,7 +103,7 @@ Codex 0.156.1で対応しています。ユーザーの`config.toml`への追加
 ## 更新
 
 この環境の個人marketplaceは`~/plugins/codex-explorer-solver`からこのリポジトリを参照しています。
-変更後はplugin-creatorの`update_plugin_cachebuster.py`でバージョンのキャッシュ識別子を更新し、次を実行します。
+変更後は`.codex-plugin/plugin.json`のバージョン末尾`+codex.YYYYMMDDHHMMSS`を現在のUTC時刻に更新し、`SHA256SUMS`を再生成してから次を実行します。
 
 ```bash
 codex plugin add codex-explorer-solver@personal

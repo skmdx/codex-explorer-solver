@@ -21,6 +21,15 @@ lines=sys.stdin.buffer.readlines();assert len(lines)==1
 message=json.loads(lines[0]);assert message['event']=='user'
 text=message['message']['content'];case=os.getenv('FAKE_CASE','ok')
 case=json.loads(os.getenv('FAKE_MODEL_CASES','{}')).get(model,case)
+if case.startswith('repair_'):
+    failure = case.removeprefix('repair_')
+    if '--conversation' in args:
+        assert 'VALIDATION ERROR:' in text and 'REJECTED HANDOFF' in text
+        case = 'timeout' if failure == 'timeout' else 'ok'
+        if failure == 'quota' and model == 'claude-sonnet-4-6':
+            case = 'quota'
+    else:
+        case = 'bad_range' if failure in ('timeout','quota') else failure
 def emit(value):
     if case in ('inherited_quota','inherited_interruption') and value.get('event')=='result':
         print(json.dumps({'event':'step_update','step_update':{'step_type':'finish','state':'DONE','step_index':100}}),flush=True)
@@ -110,7 +119,7 @@ if case=='blocked':wire.update(references=[],unresolved=['Fixture permission den
 # Per-step usage deliberately duplicates the terminal counters: must not be added.
 emit({'event':'step_update','step_update':{'step_type':'agent_response','state':'DONE','step_index':99,'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130}}})
 usage={'input_tokens':100,'output_tokens':30,'thinking_tokens':10,'cache_read_tokens':70,'total_tokens':130}
-if '--conversation' in args: usage.update(review_usage())
+usage.update(review_usage())
 if case=='no_usage':usage=None
 if case=='bad_usage':usage['input_tokens']=True
 if case=='large_cache':usage['cache_read_tokens']=1000

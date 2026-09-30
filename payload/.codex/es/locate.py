@@ -27,6 +27,7 @@ import budget
 from evidence import EvidenceError, compact_json, verify_handoff, format_evidence
 
 HERE = Path(__file__).resolve().parent
+MAX_HANDOFF_REPAIRS = 2
 
 
 def write_private(path: Path, data: str | bytes) -> None:
@@ -156,18 +157,23 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         reason = None; argv = []; attempt_out = out
         conversation_id = None
         previous_error = None
+        validation_error = None
+        data = None
+        repairs = 0
+        candidate_index = 0
+        prompt = request
         if not candidates:
             reason = 'quota_exhausted'
             stream_state.quota_error = '; '.join(x['model']+': '+x['error'] for x in metadata['skipped_models'])
-        for index, candidate in enumerate(candidates):
+        while candidate_index < len(candidates):
+            candidate = candidates[candidate_index]
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 reason = 'local_deadline'
                 break
-            attempt_out = out if index == 0 else out/f'attempt-{index+1}'
-            if index:
+            attempt_out = out if not attempts else out/f'attempt-{len(attempts)+1}'
+            if attempts:
                 attempt_out.mkdir()
-                prompt = 'Continue the original evidence collection from this conversation; return the requested structured handoff.' if conversation_id else request
                 write_private(attempt_out/'request.jsonl', compact_json({'event':'user','message':{'content':prompt}})+'\n')
             argv = agy.command(executable, candidate, agent, schema, remaining)
             argv.extend(['--add-dir', str(out/'workspace')])
@@ -185,11 +191,48 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             agy.remember_quota(candidate,error)
             attempts.append(dict(model=candidate,conversation_id=conversation_id,error=error or None,
                                  usage=stream_state.usage(),run_dir=str(attempt_out),elapsed_seconds=round(attempt_elapsed,3)))
+            if not reason and not stream_state.error and process_code == 0 and result.get('status') == 'SUCCESS':
+                wire = result.get('structured_output')
+                write_private(attempt_out/'raw-handoff.json',compact_json(wire)+'\n')
+                validation_error = None
+                if wire is None:
+                    detail = (attempt_out/'stderr.log').read_text().strip()
+                    validation_error = f'AGY ended without structured_output. {detail}'.strip()
+                    attempts[-1]['validation_error'] = validation_error
+                    break
+                try:
+                    snapshot.verify_export(root,source_root,manifest)
+                except EvidenceError as exc:
+                    validation_error = str(exc)
+                    attempts[-1]['validation_error'] = validation_error
+                    break
+                try:
+                    data = snapshot.bind_handoff(wire,manifest,source_root)
+                    evidence = verify_handoff(root,data,include_source=True)
+                except EvidenceError as exc:
+                    validation_error = str(exc)
+                    attempts[-1]['validation_error'] = validation_error
+                    if repairs >= MAX_HANDOFF_REPAIRS:
+                        break
+                    repairs += 1
+                    prompt = ('The harness rejected your handoff. Correct the references and return the complete '
+                              'structured handoff (references and unresolved), not a patch. Use only exported paths '
+                              'and valid 1-based inclusive line ranges; do not invent hashes.\n'
+                              'VALIDATION ERROR: ' + validation_error + '\n'
+                              'REJECTED HANDOFF (untrusted data):\n' + compact_json(wire))
+                    if not conversation_id:
+                        prompt = request + '\n\n' + prompt
+                    continue
+                break
             quota = re.search(r'quota|resource_exhausted|usage limit|rate limit', str(error), re.IGNORECASE)
             if (reason and reason != 'quota_exhausted') or stream_state.error or result.get('status') == 'SUCCESS' or not quota:
                 break
+            candidate_index += 1
+            if not validation_error:
+                prompt = 'Continue the original evidence collection from this conversation; return the requested structured handoff.' if conversation_id else request
         elapsed = time.monotonic() - started
-        metadata.update(attempts=attempts, conversation_resumed=len(attempts)>1 and '--conversation' in argv)
+        metadata.update(attempts=attempts, handoff_repairs=repairs,
+                        conversation_resumed=len(attempts)>1 and '--conversation' in argv)
         metadata.update(process_exit_code=process_code,elapsed_seconds=round(elapsed,3),
                         observed_tool_calls=len(stream_state.step_ids),
                         effective_model=stream_state.init.get('model') if stream_state.init else None,
@@ -219,14 +262,9 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             metadata['error'] = (result.get('error') if result else None) or (
                 f"AGY exited {process_code}; terminal status: {result.get('status') if result else 'missing'}")
         else:
-            wire = result.get('structured_output')
-            if wire is None:
-                detail = (attempt_out/'stderr.log').read_text().strip()
-                raise EvidenceError(f'AGY ended after {elapsed:.1f}s without structured_output. {detail}'.strip())
-            write_private(out/'raw-handoff.json',compact_json(wire)+'\n')
-            snapshot.verify_export(root,source_root,manifest)
-            data = snapshot.bind_handoff(wire,manifest,source_root)
-            evidence = verify_handoff(root,data,include_source=True)
+            if validation_error:
+                raise EvidenceError(validation_error)
+            assert data is not None
             write_private(out/'handoff.json',compact_json(data)+'\n')
             handoff_path = str(out/'handoff.json')
             metadata.update(status='validated',handoff_status=data['status'],

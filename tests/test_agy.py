@@ -448,6 +448,41 @@ class AgyRunnerTests(Fixture):
         self.assertEqual(result['usage']['total_tokens'],130)
     def test_hallucinated_path_rejected(self):
         r=self.invoke('outside');self.assertNotEqual(r.returncode,0);self.assertIn('outside',self.metrics()['error'])
+        self.assertEqual(len(self.metrics()['attempts']),3)
+        self.assertEqual(self.metrics()['handoff_repairs'],2)
+        self.assertFalse((self.base/'run/handoff.json').exists())
+        self.assertEqual(budget.status(self.state)['total_worker_tokens'],390)
+    def test_reference_repair_resumes_and_validates(self):
+        for case in ('outside','bad_range','fake_hash'):
+            for mode in ('localize','reader'):
+                out=f'{case}-{mode}'
+                extra=['--mode','reader','--path','src/example.py'] if mode=='reader' else []
+                with self.subTest(case=case,mode=mode):
+                    r=self.invoke('repair_'+case,extra,out=out)
+                    self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+                    report=json.loads(r.stdout)
+                    self.assertEqual(report['evidence']['primary'][0]['source'],'def f():\n    return 1\n')
+                    self.assertEqual(len(report['attempts']),2)
+                    self.assertIn('validation_error',report['attempts'][0])
+                    self.assertEqual(report['usage']['total_tokens'],260)
+                    metrics=json.loads((self.base/out/'metrics.json').read_text())
+                    self.assertTrue(metrics['conversation_resumed'])
+                    self.assertEqual(metrics['handoff_repairs'],1)
+    def test_repair_obeys_collection_deadline(self):
+        r=self.invoke('repair_timeout',['--timeout','0.5'])
+        self.assertEqual(r.returncode,124,r.stdout)
+        self.assertEqual(self.metrics()['status'],'local_deadline')
+        self.assertEqual(len(self.metrics()['attempts']),2)
+        self.assertFalse((self.base/'run/handoff.json').exists())
+    def test_repair_survives_quota_fallback(self):
+        r=self.invoke('repair_quota')
+        self.assertEqual(r.returncode,0,r.stdout)
+        metrics=self.metrics()
+        self.assertEqual([a['model'] for a in metrics['attempts']],
+                         ['claude-sonnet-4-6','claude-sonnet-4-6','gemini-3.8-flash-high'])
+        self.assertEqual(metrics['handoff_repairs'],1)
+        self.assertTrue(metrics['conversation_resumed'])
+        self.assertIn('VALIDATION ERROR:',(self.base/'run/attempt-3/request.jsonl').read_text())
     def test_model_generated_hash_not_accepted(self):
         r=self.invoke('fake_hash');self.assertNotEqual(r.returncode,0);self.assertIn('sha256',self.metrics()['error'])
     def test_out_of_bounds_range_rejected(self):
@@ -455,6 +490,7 @@ class AgyRunnerTests(Fixture):
     def test_snapshot_modification_rejected_original_unchanged(self):
         original=(self.repo/'src/example.py').read_bytes();r=self.invoke('snapshot_changed');self.assertNotEqual(r.returncode,0)
         self.assertEqual((self.repo/'src/example.py').read_bytes(),original)
+        self.assertEqual(len(self.metrics()['attempts']),1)
     def test_uncited_reader_input_modification_rejected(self):
         r=self.invoke('other_changed',['--mode','reader','--path','src/example.py','--path','src/other.py'])
         self.assertNotEqual(r.returncode,0);self.assertIn('snapshot_modified',self.metrics()['error'])
