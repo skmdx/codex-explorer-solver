@@ -12,10 +12,12 @@ import signal
 import sys
 import tempfile
 import tomllib
+from typing import Any
 from typing_extensions import TypedDict
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import validate_call
 
 from evidence import evidence_blocks, format_evidence, load_handoff, verify_handoff
 from agy_snapshot import select_paths
@@ -55,12 +57,14 @@ def catalog(run: Path) -> dict:
 
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
 async def collect(
-    repo: str, question: str, evidence_needed: list[EvidenceRequest], scratch_dir: str,
-    navigation: dict | None,
-    known_findings: str,
-    paths: list[str] | None = None, include_untracked: bool = False,
+    repo: str | None = None, question: str | None = None,
+    evidence_needed: list[EvidenceRequest] | None = None, scratch_dir: str | None = None,
+    navigation: dict | None = None,
+    known_findings: str | None = None,
+    paths: list[str] | None = None, include_untracked: bool | None = None,
     model: str | None = None,
     encodings: dict[str, str] | None = None,
+    params_file: str | None = None,
 ) -> dict:
     """Collect source evidence through Sonnet, falling back to Gemini Flash High on usage limits, and wait for completion.
 
@@ -87,7 +91,38 @@ async def collect(
     With no scope filter, include_untracked adds non-ignored untracked files.
     model overrides the configured model.
     Encodings are detected per file; encodings={path: codec} corrects known mistakes.
+    For large requests, save these arguments as a UTF-8 JSON object and call with
+    only params_file="/absolute/path/request.json". Do not mix non-null inline
+    arguments with params_file. File contents use the same validation as inline
+    arguments; params_file cannot occur inside the file. Paths retain their usual
+    meaning (they are not relative to the JSON file). Retry using the same file.
     """
+    arguments: dict[str, Any] = dict(repo=repo, question=question, evidence_needed=evidence_needed,
+                     scratch_dir=scratch_dir, navigation=navigation,
+                     known_findings=known_findings, paths=paths,
+                     include_untracked=include_untracked, model=model, encodings=encodings)
+    if params_file is not None:
+        if any(value is not None for value in arguments.values()):
+            raise ValueError('params_file cannot be combined with inline arguments')
+        file = Path(params_file)
+        if not file.is_absolute():
+            raise ValueError('params_file must be an absolute path')
+        arguments = json.loads(file.read_text(encoding='utf-8'))
+        if not isinstance(arguments, dict):
+            raise ValueError('params_file must contain a JSON object')
+    else:
+        arguments = {key: value for key, value in arguments.items()
+                     if value is not None or key == 'navigation'}
+    return await _collect(**arguments)
+
+
+@validate_call
+async def _collect(
+    repo: str, question: str, evidence_needed: list[EvidenceRequest], scratch_dir: str,
+    navigation: dict | None, known_findings: str,
+    paths: list[str] | None = None, include_untracked: bool = False,
+    model: str | None = None, encodings: dict[str, str] | None = None,
+) -> dict:
     root = Path(repo).resolve(strict=True)
     scratch = Path(scratch_dir).resolve(strict=True)
     if scratch == root or root in scratch.parents:

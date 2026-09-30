@@ -59,6 +59,54 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('external source',(run/'request.jsonl').read_text())
         self.assertIn('return 1',read_evidence(str(run),[1])['text'])
 
+    async def test_params_file_over_stdio_and_retry(self):
+        request = self.base/'request.json'
+        arguments = dict(repo=str(self.repo), scratch_dir=str(self.base),
+                         question='Where is f?', evidence_needed=[{'fact':'definition','scope':[]}],
+                         navigation=None, known_findings='既知の情報',
+                         paths=['src/example.py'], model='gemini-custom-model',
+                         encodings={'src/example.py':'utf-8'})
+        request.write_text(json.dumps(arguments, ensure_ascii=False), encoding='utf-8')
+        params = StdioServerParameters(command=sys.executable,
+                    args=[str(KIT/'payload/.codex/es/server.py')], env=dict(os.environ))
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                schema = next(t.inputSchema for t in (await session.list_tools()).tools if t.name=='collect')
+                self.assertIn('params_file', schema['properties'])
+                self.assertFalse(schema.get('required'))
+                failed = await session.call_tool('collect', {'params_file':str(request), 'question':'mixed'})
+                self.assertTrue(failed.isError)
+                for _ in range(2):
+                    result = await session.call_tool('collect', {'params_file':str(request)})
+                    self.assertFalse(result.isError, result)
+                    index = json.loads(result.content[0].text)
+                    self.assertEqual(index['status'], 'validated', index)
+                    run = Path(index['run_dir'])
+                    self.assertIn('既知の情報', (run/'request.jsonl').read_text())
+                    self.assertEqual(index['effective_model'], 'gemini-custom-model')
+                    source = await session.call_tool('read_evidence', {'run_dir':str(run), 'ids':[1]})
+                    self.assertFalse(source.isError)
+                    self.assertIn('return 1', json.loads(source.content[0].text)['text'])
+        self.assertEqual(json.loads(request.read_text()), arguments)
+
+    async def test_params_file_validation_before_collection(self):
+        request = self.base/'request.json'
+        valid = dict(repo=str(self.repo), scratch_dir=str(self.base), question='Where?',
+                     evidence_needed=[{'fact':'definition','scope':['src']}],
+                     navigation=None, known_findings='')
+        for contents in ('{', '[]', '{}', json.dumps(dict(valid, params_file=str(request))),
+                         json.dumps(dict(valid, evidence_needed=[{'fact':'missing scope'}])),
+                         json.dumps(dict(valid, include_untracked='invalid'))):
+            request.write_text(contents)
+            with self.subTest(contents=contents), self.assertRaises(ValueError):
+                await collect(params_file=str(request))
+        with self.assertRaisesRegex(ValueError, 'absolute'):
+            await collect(params_file='relative.json')
+        with self.assertRaises(FileNotFoundError):
+            await collect(params_file=str(self.base/'missing.json'))
+        self.assertEqual(list(self.base.glob('explore-solve-*')), [])
+
     async def test_untracked_and_model_options_reach_collection(self):
         (self.repo/'src/new.py').write_text('new = 1\n')
         result=await self.run_collection(include_untracked=True,model='gemini-custom-model')

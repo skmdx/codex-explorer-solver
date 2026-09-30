@@ -73,6 +73,12 @@ Codex 0.156.1で対応しています。ユーザーの`config.toml`への追加
 
 プラグイン更新後は新しいセッションで使用します。
 `collect`と`read_evidence`は直接のMCPツールとして公開され、Code Mode内の`tools`と`ALL_TOOLS`には入りません。
+
+長い引数はUTF-8のJSONオブジェクトとして一時ファイルに保存し、
+`collect`へ`{"params_file":"/absolute/path/request.json"}`だけを渡せます。
+再試行では同じファイルを指定します。内容は従来の引数一式で、直接指定との混在や
+ファイル内の`params_file`は不可です。ファイル内のパスの解釈は従来どおりです。
+使い終えた引数ファイルは削除してください。
 したがって`yield_time_ms`の指定は不要です。収集期限は`agy.toml`の既定30分で、呼出し引数からは変更できません。
 他のツールのCode Mode利用には影響しません。
 

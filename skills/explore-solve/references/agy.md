@@ -9,6 +9,14 @@ Call `collect` directly. The plugin excludes its MCP tools from Code Mode;
 there is no outer cell or polling handle for this call.
 The collection deadline is configured in `agy.toml`, not passed by the Solver.
 
+Large requests can be saved as a UTF-8 JSON object containing the same arguments
+shown below. Call `collect` with only `{"params_file":"/absolute/path/request.json"}`
+and reuse that file on retry. The file path must be absolute; paths inside the
+object keep their usual meaning, not a base relative to the JSON file. Non-null
+inline arguments cannot be mixed with `params_file`, and the file cannot itself
+contain `params_file`. Missing required fields and invalid types are rejected
+before collection starts. Keep the file in workspace scratch and delete it when done.
+
 ## Pass known symbol locations
 
 Use existing Symbols results where available. Otherwise request only the relations
