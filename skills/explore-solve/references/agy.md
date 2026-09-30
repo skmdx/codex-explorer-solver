@@ -17,6 +17,13 @@ inline arguments cannot be mixed with `params_file`, and the file cannot itself
 contain `params_file`. Missing required fields and invalid types are rejected
 before collection starts. Keep the file in workspace scratch and delete it when done.
 
+Inline call failures, including MCP argument validation errors, save the arguments
+as `collect-failed-*.json` in `scratch_dir`. The error response or failed collection
+index includes `params_file`. Edit that file if needed and retry using only its path.
+Successful calls and calls already using `params_file` do not create retry copies.
+If `scratch_dir` is missing or unwritable, the original error remains and
+`params_save_error` describes the save failure. Delete saved requests after use.
+
 ## Pass known symbol locations
 
 Use existing Symbols results where available. Otherwise request only the relations

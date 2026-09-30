@@ -16,6 +16,7 @@ from typing import Any
 from typing_extensions import TypedDict
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import validate_call
 
@@ -24,7 +25,34 @@ from agy_snapshot import select_paths
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
-mcp = FastMCP("explore-solve")
+
+def save_failed_arguments(arguments: dict[str, Any]) -> dict:
+    """Preserve an inline request without hiding its original failure."""
+    try:
+        scratch = Path(arguments['scratch_dir']).resolve(strict=True)
+        contents = json.dumps(arguments, ensure_ascii=False, indent=2) + '\n'
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                         prefix='collect-failed-', suffix='.json',
+                                         dir=scratch, delete=False) as file:
+            file.write(contents)
+        return {'params_file': file.name,
+                'retry': 'Correct the saved arguments if needed, then call collect with only params_file. Delete the file after use.'}
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return {'params_save_error': f'Could not save arguments in scratch_dir: {error}'}
+
+
+class CollectionMCP(FastMCP):
+    async def call_tool(self, name: str, arguments: dict[str, Any]):
+        try:
+            return await super().call_tool(name, arguments)
+        except Exception as error:
+            if name != 'collect' or arguments.get('params_file') is not None:
+                raise
+            saved = save_failed_arguments(arguments)
+            raise ToolError(f'{error}\n{json.dumps(saved, ensure_ascii=False)}') from error
+
+
+mcp = CollectionMCP("explore-solve")
 
 
 class EvidenceRequest(TypedDict):
@@ -96,6 +124,9 @@ async def collect(
     arguments with params_file. File contents use the same validation as inline
     arguments; params_file cannot occur inside the file. Paths retain their usual
     meaning (they are not relative to the JSON file). Retry using the same file.
+    Failed inline calls save their arguments as collect-failed-*.json in scratch_dir
+    and return params_file for retry. If saving fails, params_save_error explains why.
+    Correct invalid arguments in the saved file and delete it after use.
     """
     arguments: dict[str, Any] = dict(repo=repo, question=question, evidence_needed=evidence_needed,
                      scratch_dir=scratch_dir, navigation=navigation,
@@ -113,7 +144,10 @@ async def collect(
     else:
         arguments = {key: value for key, value in arguments.items()
                      if value is not None or key == 'navigation'}
-    return await _collect(**arguments)
+    result = await _collect(**arguments)
+    if params_file is None and result['status'] != 'validated':
+        result.update(save_failed_arguments(arguments))
+    return result
 
 
 @validate_call

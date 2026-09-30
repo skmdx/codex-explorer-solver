@@ -26,6 +26,9 @@ Give the next decision and pair each missing fact with its source scope in
 For large arguments, save the complete argument object as UTF-8 JSON in workspace
 scratch and call `collect(params_file="/absolute/path/request.json")`. Retry with
 the same file; do not combine it with inline arguments. Remove it after use.
+Failed inline calls save their arguments in `scratch_dir` and return `params_file`.
+Correct the saved file if the arguments caused the failure, then retry by path.
+`params_save_error` means saving failed; the original collection error is retained.
 Reuse known findings; reopen settled questions only for a source change, new failure, or counterexample.
 If known Symbols locations can seed the search, pass their results directly to
 `collect.navigation` using [the example](references/agy.md). Include existing

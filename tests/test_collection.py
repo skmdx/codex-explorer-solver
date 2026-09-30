@@ -107,6 +107,40 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
             await collect(params_file=str(self.base/'missing.json'))
         self.assertEqual(list(self.base.glob('explore-solve-*')), [])
 
+    async def test_inline_mcp_errors_save_original_arguments_for_retry(self):
+        arguments: dict = dict(repo=str(self.repo), scratch_dir=str(self.base),
+                         question='定義はどこ?', evidence_needed=[{'fact':'definition','scope':42}],
+                         navigation=None, known_findings='既知の情報')
+        params = StdioServerParameters(command=sys.executable,
+                    args=[str(KIT/'payload/.codex/es/server.py')], env=dict(os.environ))
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                for scope in (42, ['missing.py']):
+                    arguments['evidence_needed'][0]['scope'] = scope
+                    result = await session.call_tool('collect', arguments)
+                    self.assertTrue(result.isError)
+                    message = result.content[0].text
+                    saved = json.loads(message.splitlines()[-1])
+                    file = Path(saved['params_file'])
+                    self.assertEqual(json.loads(file.read_text()), arguments)
+                    self.assertEqual(file.stat().st_mode & 0o777, 0o600)
+                    retry = await session.call_tool('collect', {'params_file':str(file)})
+                    self.assertTrue(retry.isError)
+                    self.assertNotIn('collect-failed-', retry.content[0].text)
+                    corrected = json.loads(file.read_text())
+                    corrected['evidence_needed'][0]['scope'] = ['src']
+                    file.write_text(json.dumps(corrected))
+                    retry = await session.call_tool('collect', {'params_file':str(file)})
+                    self.assertFalse(retry.isError, retry)
+                    self.assertEqual(json.loads(retry.content[0].text)['status'], 'validated')
+                self.assertEqual(len(list(self.base.glob('collect-failed-*.json'))), 2)
+                arguments['scratch_dir'] = str(self.base/'missing')
+                result = await session.call_tool('collect', arguments)
+                self.assertTrue(result.isError)
+                self.assertIn('params_save_error', result.content[0].text)
+                self.assertIn('No such file', result.content[0].text)
+
     async def test_untracked_and_model_options_reach_collection(self):
         (self.repo/'src/new.py').write_text('new = 1\n')
         result=await self.run_collection(include_untracked=True,model='gemini-custom-model')
@@ -200,6 +234,9 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
             result=await self.run_collection()
         self.assertNotEqual(result['status'],'validated')
         self.assertEqual(result['locations'],[])
+        saved = json.loads(Path(result['params_file']).read_text())
+        self.assertEqual(saved['repo'], str(self.repo))
+        self.assertEqual(saved['question'], 'Where is f defined?')
         metrics=json.loads((Path(result['run_dir'])/'metrics.json').read_text())
         self.assertTrue(metrics['task_usage_recorded'])
 
