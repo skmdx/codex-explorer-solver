@@ -11,7 +11,7 @@ Give a self-contained task with the needed facts and deliverable. Keep Claude
 review requests concise. Pass `repo` when files are needed; omit it for pure
 reasoning. `scratch_dir` is an existing temporary directory outside the repository.
 
-The default model is Gemini High. Use `models` to select a requested model.
+The default model is Claude Opus 4.6 Thinking. Use `models` to select a requested model.
 The harness handles review model fallback using `agy.toml`; do not repeat calls
 to implement it yourself. Report the returned model, failures and incomplete reviews.
 

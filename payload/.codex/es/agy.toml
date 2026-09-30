@@ -6,4 +6,4 @@ explorer_model = "claude-sonnet-4-6"
 reader_model = "claude-sonnet-4-6"
 review_model_order = ["claude-opus-4-6-thinking", "gemini-3.1-pro-high", "gemini-3.8-flash-high"]
 collection_model_order = ["claude-sonnet-4-6", "gemini-3.8-flash-high"]
-subagent_model = "gemini-3.8-flash-high"
+subagent_model = "claude-opus-4-6-thinking"

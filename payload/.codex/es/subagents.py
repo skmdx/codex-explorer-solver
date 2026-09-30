@@ -72,7 +72,7 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
     review exposes read/search tools only. edit also exposes file edits and commands;
     use it only for work already authorized by the user, with a repo.
     scratch_dir is an existing absolute temporary directory outside repo.
-    Default model is Gemini High; use models to find other model slugs.
+    Default model is Claude Opus 4.6 Thinking; use models to find other model slugs.
     Reviews starting with a model in agy.toml's review_model_order advance to
     the next model on quota or model-unavailable errors, resuming the AGY
     conversation when one exists. Edits do not retry.
