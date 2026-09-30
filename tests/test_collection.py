@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT/'payload/.codex/es'))
-from server import collect, read_evidence
+from server import collect, read_evidence, cleanup, result_dirs, params_files, active_paths
 from evidence import EvidenceError
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -20,6 +20,7 @@ from mcp.client.stdio import stdio_client
 
 class CollectionTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        result_dirs.clear(); params_files.clear(); active_paths.clear()
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name)
         self.repo = self.base/'repo'
@@ -78,8 +79,10 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 failed = await session.call_tool('collect', {'params_file':str(request), 'question':'mixed'})
                 self.assertTrue(failed.isError)
                 for _ in range(2):
+                    request.write_text(json.dumps(arguments), encoding='utf-8')
                     result = await session.call_tool('collect', {'params_file':str(request)})
                     self.assertFalse(result.isError, result)
+                    self.assertFalse(request.exists())
                     index = json.loads(result.content[0].text)
                     self.assertEqual(index['status'], 'validated', index)
                     run = Path(index['run_dir'])
@@ -88,7 +91,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                     source = await session.call_tool('read_evidence', {'run_dir':str(run), 'ids':[1]})
                     self.assertFalse(source.isError)
                     self.assertIn('return 1', json.loads(source.content[0].text)['text'])
-        self.assertEqual(json.loads(request.read_text()), arguments)
+        self.assertFalse(request.exists())
 
     async def test_params_file_validation_before_collection(self):
         request = self.base/'request.json'
@@ -127,6 +130,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(file.stat().st_mode & 0o777, 0o600)
                     retry = await session.call_tool('collect', {'params_file':str(file)})
                     self.assertTrue(retry.isError)
+                    self.assertTrue(file.exists())
                     self.assertNotIn('collect-failed-', retry.content[0].text)
                     corrected = json.loads(file.read_text())
                     corrected['evidence_needed'][0]['scope'] = ['src']
@@ -134,7 +138,8 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                     retry = await session.call_tool('collect', {'params_file':str(file)})
                     self.assertFalse(retry.isError, retry)
                     self.assertEqual(json.loads(retry.content[0].text)['status'], 'validated')
-                self.assertEqual(len(list(self.base.glob('collect-failed-*.json'))), 2)
+                    self.assertFalse(file.exists())
+                self.assertEqual(len(list(self.base.glob('collect-failed-*.json'))), 0)
                 arguments['scratch_dir'] = str(self.base/'missing')
                 result = await session.call_tool('collect', arguments)
                 self.assertTrue(result.isError)
@@ -252,6 +257,108 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):await task
         with self.assertRaises(ProcessLookupError):os.kill(pid,0)
+
+    async def test_cleanup_skips_active_file_and_directory_then_removes_cancelled_run(self):
+        os.environ['FAKE_CASE']='timeout'
+        pid_file=self.base/'worker.pid'
+        os.environ['FAKE_PID_FILE']=str(pid_file)
+        request=self.base/'request.json'
+        request.write_text(json.dumps(dict(repo=str(self.repo), scratch_dir=str(self.base),
+            question='Where?', evidence_needed=[{'fact':'definition','scope':['src']}],
+            navigation=None, known_findings='')))
+        task=asyncio.create_task(collect(params_file=str(request)))
+        try:
+            async def started():
+                while not pid_file.exists(): await asyncio.sleep(0.01)
+            await asyncio.wait_for(started(),5)
+            active=await cleanup()
+            self.assertEqual(set(active['skipped_active']), {str(request), *map(str,result_dirs)})
+            self.assertEqual(active['deleted'], [])
+        finally:
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError): await task
+        self.assertTrue(request.exists())
+        removed=await cleanup()
+        self.assertEqual(len(removed['deleted']), 2)
+        self.assertFalse(request.exists())
+        self.assertFalse(active_paths)
+        self.assertFalse(result_dirs)
+        self.assertFalse(params_files)
+
+    async def test_cleanup_retains_deletion_failures_for_retry(self):
+        result=await self.run_collection()
+        work=Path(result['run_dir']).parent
+        with patch('server.shutil.rmtree', side_effect=PermissionError('denied')):
+            failed=await cleanup()
+        self.assertIn(str(work),failed['errors'])
+        self.assertIn(work,result_dirs)
+        self.assertIn(str(work),(await cleanup())['deleted'])
+        self.assertEqual((await cleanup())['deleted'], [])
+
+    async def test_argument_file_delete_failure_and_missing_are_reported(self):
+        request=self.base/'request.json'
+        request.write_text(json.dumps(dict(repo=str(self.repo), scratch_dir=str(self.base),
+            question='Where?', evidence_needed=[{'fact':'definition','scope':['src']}],
+            navigation=None, known_findings='')))
+        with patch.object(Path, 'unlink', side_effect=PermissionError('denied')):
+            result=await collect(params_file=str(request))
+        self.assertEqual(result['status'], 'validated')
+        self.assertEqual(result['params_delete_error'], 'denied')
+        self.assertTrue(request.exists())
+        with patch.object(Path, 'unlink', side_effect=PermissionError('denied')):
+            failed=await cleanup()
+        self.assertIn(str(request), failed['errors'])
+        self.assertIn(request, params_files)
+        request.unlink()
+        removed=await cleanup()
+        self.assertIn(str(request), removed['missing'])
+        self.assertNotIn(request, params_files)
+
+    async def test_failed_collection_keeps_argument_file_until_success(self):
+        request=self.base/'request.json'
+        request.write_text(json.dumps(dict(repo=str(self.repo), scratch_dir=str(self.base),
+            question='Where?', evidence_needed=[{'fact':'definition','scope':['src']}],
+            navigation=None, known_findings='')))
+        os.environ['FAKE_CASE']='timeout'
+        with patch.dict('server.CONFIG',timeout_seconds=0.2):
+            failed=await collect(params_file=str(request))
+        self.assertNotEqual(failed['status'], 'validated')
+        self.assertTrue(request.exists())
+        os.environ['FAKE_CASE']='ok'
+        result=await collect(params_file=str(request))
+        self.assertEqual(result['status'], 'validated')
+        self.assertFalse(request.exists())
+
+    async def test_cleanup_isolated_stdio_sessions_and_argument_files(self):
+        untouched=self.base/'unrelated'; untouched.mkdir()
+        (untouched/'keep').write_text('keep')
+        request=self.base/'invalid.json'; request.write_text('{')
+        args=dict(repo=str(self.repo), scratch_dir=str(self.base), question='Where?',
+                  evidence_needed=[{'fact':'definition','scope':['src']}], navigation=None, known_findings='')
+        params=StdioServerParameters(command=sys.executable,
+                    args=[str(KIT/'payload/.codex/es/server.py')], env=dict(os.environ))
+        async with stdio_client(params) as (read_a,write_a), stdio_client(params) as (read_b,write_b):
+            async with ClientSession(read_a,write_a) as a, ClientSession(read_b,write_b) as b:
+                await a.initialize(); await b.initialize()
+                tools=(await a.list_tools()).tools
+                tool=next(t for t in tools if t.name=='cleanup')
+                self.assertFalse(tool.inputSchema.get('properties'))
+                self.assertTrue(tool.annotations.destructiveHint)
+                first=json.loads((await a.call_tool('collect',args)).content[0].text)
+                second=json.loads((await b.call_tool('collect',args)).content[0].text)
+                failed=await a.call_tool('collect',dict(args,question=''))
+                saved=Path(json.loads(failed.content[0].text.splitlines()[-1])['params_file'])
+                invalid=await a.call_tool('collect',{'params_file':str(request)})
+                self.assertTrue(invalid.isError)
+                removed=json.loads((await a.call_tool('cleanup',{})).content[0].text)
+                self.assertEqual(set(removed['deleted']),{str(Path(first['run_dir']).parent),str(saved),str(request)})
+                self.assertTrue(Path(second['run_dir']).exists())
+                self.assertTrue((untouched/'keep').exists())
+                self.assertTrue(self.repo.exists())
+                self.assertTrue(self.base.exists())
+                again=json.loads((await a.call_tool('cleanup',{})).content[0].text)
+                self.assertEqual(again['deleted'],[])
+                await b.call_tool('cleanup',{})
 
     async def test_implicit_offset_resumes_and_id_order_is_stable(self):
         result=await self.run_collection();run=Path(result['run_dir'])

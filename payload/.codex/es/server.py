@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 import json
 from pathlib import Path
+import shutil
 import signal
 import sys
 import tempfile
@@ -25,6 +27,9 @@ from agy_snapshot import select_paths
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
+result_dirs: set[Path] = set()
+params_files: set[Path] = set()
+active_paths: Counter[Path] = Counter()
 
 def save_failed_arguments(arguments: dict[str, Any]) -> dict:
     """Preserve an inline request without hiding its original failure."""
@@ -35,8 +40,9 @@ def save_failed_arguments(arguments: dict[str, Any]) -> dict:
                                          prefix='collect-failed-', suffix='.json',
                                          dir=scratch, delete=False) as file:
             file.write(contents)
+        params_files.add(Path(file.name))
         return {'params_file': file.name,
-                'retry': 'Correct the saved arguments if needed, then call collect with only params_file. Delete the file after use.'}
+                'retry': 'Correct the saved arguments if needed, then call collect with only params_file. Success deletes it; cleanup removes unused session files.'}
     except (OSError, ValueError, TypeError, KeyError) as error:
         return {'params_save_error': f'Could not save arguments in scratch_dir: {error}'}
 
@@ -53,6 +59,41 @@ class CollectionMCP(FastMCP):
 
 
 mcp = CollectionMCP("explore-solve")
+
+
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=False))
+async def cleanup() -> dict:
+    """Delete collection directories and argument files tracked by this MCP session.
+
+    Call directly after evidence and logs are no longer needed. Takes no paths.
+    Tracks directories created by collect, params_file inputs read by collect,
+    and argument files saved after inline failures. Active paths are skipped.
+    Other sessions and unrelated files are untouched; scratch roots are retained.
+    Returns deleted, missing, skipped_active and errors. Failed deletions stay
+    tracked for retry. Tracking ends when this MCP server exits.
+    """
+    result: dict = dict(deleted=[], missing=[], skipped_active=[], errors={})
+    for out in sorted(result_dirs | params_files):
+        path = str(out)
+        if any(out == active or out in active.parents or active in out.parents
+               for active in active_paths):
+            result['skipped_active'].append(path)
+            continue
+        try:
+            if out in result_dirs:
+                shutil.rmtree(out)
+            else:
+                out.unlink()
+        except FileNotFoundError:
+            result['missing'].append(path)
+        except OSError as error:
+            result['errors'][path] = str(error)
+            continue
+        else:
+            result['deleted'].append(path)
+        result_dirs.discard(out)
+        params_files.discard(out)
+    return result
 
 
 class EvidenceRequest(TypedDict):
@@ -126,28 +167,49 @@ async def collect(
     meaning (they are not relative to the JSON file). Retry using the same file.
     Failed inline calls save their arguments as collect-failed-*.json in scratch_dir
     and return params_file for retry. If saving fails, params_save_error explains why.
-    Correct invalid arguments in the saved file and delete it after use.
+    Correct invalid arguments in the saved file. A validated collection deletes
+    its params_file automatically. Failed requests retain it. cleanup removes this
+    session's collection directories and unused argument files when no longer needed.
     """
     arguments: dict[str, Any] = dict(repo=repo, question=question, evidence_needed=evidence_needed,
                      scratch_dir=scratch_dir, navigation=navigation,
                      known_findings=known_findings, paths=paths,
                      include_untracked=include_untracked, model=model, encodings=encodings)
+    file = None
     if params_file is not None:
         if any(value is not None for value in arguments.values()):
             raise ValueError('params_file cannot be combined with inline arguments')
         file = Path(params_file)
         if not file.is_absolute():
             raise ValueError('params_file must be an absolute path')
-        arguments = json.loads(file.read_text(encoding='utf-8'))
+        contents = file.read_text(encoding='utf-8')
+        params_files.add(file)
+        arguments = json.loads(contents)
         if not isinstance(arguments, dict):
             raise ValueError('params_file must contain a JSON object')
     else:
         arguments = {key: value for key, value in arguments.items()
                      if value is not None or key == 'navigation'}
-    result = await _collect(**arguments)
-    if params_file is None and result['status'] != 'validated':
-        result.update(save_failed_arguments(arguments))
-    return result
+    if file is not None:
+        active_paths[file] += 1
+    result = None
+    try:
+        result = await _collect(**arguments)
+        if params_file is None and result['status'] != 'validated':
+            result.update(save_failed_arguments(arguments))
+        return result
+    finally:
+        if file is not None:
+            active_paths[file] -= 1
+            if not active_paths[file]:
+                del active_paths[file]
+                if result is not None and result['status'] == 'validated':
+                    try:
+                        file.unlink(missing_ok=True)
+                    except OSError as error:
+                        result['params_delete_error'] = str(error)
+                    else:
+                        params_files.discard(file)
 
 
 @validate_call
@@ -177,6 +239,7 @@ async def _collect(
             scope.extend(item['scope'] or ['.'])
     scope = list(dict.fromkeys(scope))
     work = Path(tempfile.mkdtemp(prefix='explore-solve-', dir=scratch))
+    result_dirs.add(work)
     run = work/'result'
     task = work/'task.txt'
     task.write_text('SOLVER QUESTION (do not solve it):\n'+question
@@ -204,15 +267,19 @@ async def _collect(
         nav = work/'navigation.json'
         nav.write_text(json.dumps(navigation, ensure_ascii=False))
         argv.extend(['--navigation-file',str(nav)])
-    with (work/'runner.log').open('wb') as log:
-        proc = await asyncio.create_subprocess_exec(*argv, stdout=log, stderr=log)
-        try:
-            await proc.wait()
-        except asyncio.CancelledError:
-            if proc.returncode is None:
-                proc.send_signal(signal.SIGINT)
-                await asyncio.shield(proc.wait())
-            raise
+    active_paths[work] += 1
+    try:
+        with (work/'runner.log').open('wb') as log:
+            proc = await asyncio.create_subprocess_exec(*argv, stdout=log, stderr=log)
+            try:
+                await proc.wait()
+            except asyncio.CancelledError:
+                if proc.returncode is None:
+                    proc.send_signal(signal.SIGINT)
+                    await asyncio.shield(proc.wait())
+                raise
+    finally:
+        del active_paths[work]
     if not (run/'report.json').exists():
         raise RuntimeError(f'Collection failed: {(work/"runner.log").read_text()}')
     return catalog(run)

@@ -15,14 +15,23 @@ and reuse that file on retry. The file path must be absolute; paths inside the
 object keep their usual meaning, not a base relative to the JSON file. Non-null
 inline arguments cannot be mixed with `params_file`, and the file cannot itself
 contain `params_file`. Missing required fields and invalid types are rejected
-before collection starts. Keep the file in workspace scratch and delete it when done.
+before collection starts. Keep the file in workspace scratch. A validated collection
+automatically deletes its argument file; failures keep it available for retry.
 
 Inline call failures, including MCP argument validation errors, save the arguments
 as `collect-failed-*.json` in `scratch_dir`. The error response or failed collection
 index includes `params_file`. Edit that file if needed and retry using only its path.
 Successful calls and calls already using `params_file` do not create retry copies.
 If `scratch_dir` is missing or unwritable, the original error remains and
-`params_save_error` describes the save failure. Delete saved requests after use.
+`params_save_error` describes the save failure. Automatic deletion failures are
+reported as `params_delete_error` without changing a validated collection's status.
+
+Call `cleanup()` directly when this session's evidence and logs are no longer needed.
+It takes no paths and deletes tracked collection directories, argument files read
+by `collect`, and automatically saved failed requests. Active paths are skipped.
+The result lists `deleted`, `missing`, `skipped_active`, and `errors`; failed deletions
+remain tracked for retry. Scratch roots, unrelated files, and other sessions' data
+are untouched. Tracking is in memory and ends when this MCP server exits.
 
 ## Pass known symbol locations
 
