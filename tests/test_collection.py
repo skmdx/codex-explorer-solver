@@ -132,10 +132,12 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(retry.isError)
                     self.assertTrue(file.exists())
                     self.assertNotIn('collect-failed-', retry.content[0].text)
-                    corrected = json.loads(file.read_text())
-                    corrected['evidence_needed'][0]['scope'] = ['src']
-                    file.write_text(json.dumps(corrected))
-                    retry = await session.call_tool('collect', {'params_file':str(file)})
+                    failed_update = await session.call_tool('collect', {'params_file':str(file),
+                        'updates': {'evidence_needed':[{'fact':'definition','scope':['still-missing.py']}]}})
+                    self.assertTrue(failed_update.isError)
+                    self.assertEqual(json.loads(file.read_text())['evidence_needed'][0]['scope'], ['still-missing.py'])
+                    retry = await session.call_tool('collect', {'params_file':str(file),
+                        'updates': {'evidence_needed':[{'fact':'definition','scope':['src']}]}})
                     self.assertFalse(retry.isError, retry)
                     self.assertEqual(json.loads(retry.content[0].text)['status'], 'validated')
                     self.assertFalse(file.exists())

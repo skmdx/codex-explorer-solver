@@ -20,7 +20,9 @@ automatically deletes its argument file; failures keep it available for retry.
 
 Inline call failures, including MCP argument validation errors, save the arguments
 as `collect-failed-*.json` in `scratch_dir`. The error response or failed collection
-index includes `params_file`. Edit that file if needed and retry using only its path.
+index includes `params_file`. Retry with that reference and optional `updates`
+containing only corrected top-level arguments. Whole values (including lists)
+are replaced; null is supported. The tool saves corrections before retrying.
 Successful calls and calls already using `params_file` do not create retry copies.
 If `scratch_dir` is missing or unwritable, the original error remains and
 `params_save_error` describes the save failure. Automatic deletion failures are

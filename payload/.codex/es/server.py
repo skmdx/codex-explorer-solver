@@ -42,7 +42,7 @@ def save_failed_arguments(arguments: dict[str, Any]) -> dict:
             file.write(contents)
         params_files.add(Path(file.name))
         return {'params_file': file.name,
-                'retry': 'Correct the saved arguments if needed, then call collect with only params_file. Success deletes it; cleanup removes unused session files.'}
+                'retry': 'Call collect with params_file and optional updates containing only changed arguments. Success deletes the saved request; cleanup removes unused session files.'}
     except (OSError, ValueError, TypeError, KeyError) as error:
         return {'params_save_error': f'Could not save arguments in scratch_dir: {error}'}
 
@@ -134,6 +134,7 @@ async def collect(
     model: str | None = None,
     encodings: dict[str, str] | None = None,
     params_file: str | None = None,
+    updates: dict[str, Any] | None = None,
 ) -> dict:
     """Collect source evidence through Sonnet, falling back to Gemini Flash High on usage limits, and wait for completion.
 
@@ -164,10 +165,13 @@ async def collect(
     only params_file="/absolute/path/request.json". Do not mix non-null inline
     arguments with params_file. File contents use the same validation as inline
     arguments; params_file cannot occur inside the file. Paths retain their usual
-    meaning (they are not relative to the JSON file). Retry using the same file.
+    meaning (they are not relative to the JSON file).
     Failed inline calls save their arguments as collect-failed-*.json in scratch_dir
     and return params_file for retry. If saving fails, params_save_error explains why.
-    Correct invalid arguments in the saved file. A validated collection deletes
+    Retry with params_file and optional updates containing only changed top-level
+    arguments; updates replace whole values, including lists, and may set null.
+    The tool saves corrections; no file editing or full argument resubmission is needed.
+    A validated collection deletes
     its params_file automatically. Failed requests retain it. cleanup removes this
     session's collection directories and unused argument files when no longer needed.
     """
@@ -187,7 +191,14 @@ async def collect(
         arguments = json.loads(contents)
         if not isinstance(arguments, dict):
             raise ValueError('params_file must contain a JSON object')
+        if updates is not None:
+            if active_paths[file]:
+                raise ValueError('cannot update an active request')
+            arguments.update(updates)
+            file.write_text(json.dumps(arguments, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     else:
+        if updates is not None:
+            raise ValueError('updates requires params_file')
         arguments = {key: value for key, value in arguments.items()
                      if value is not None or key == 'navigation'}
     if file is not None:
