@@ -119,7 +119,7 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
         attempt_dir.mkdir()
         attempt_request = attempt_dir/'request.jsonl'
         attempt_request.write_text(json.dumps({'event': 'user', 'message': {'content':
-            'Continue the original task from the existing conversation. The previous model became unavailable.'
+            'Continue the original task from the existing conversation.'
             if conversation_id else task}})+'\n')
         report = await run_attempt(candidate, mode, agent, root, workspace, attempt_request,
                                    attempt_dir, remaining, conversation_id,
@@ -152,11 +152,8 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
 async def run_attempt(model: str, mode: str, agent: str, root: Path | None, workspace: Path,
                       request_path: Path, out: Path, timeout: float,
                       conversation_id: str | None = None, previous_error: str | None = None) -> dict:
-    argv = agy.command(CONFIG['executable'], model, agent, None, timeout)
-    if conversation_id:
-        argv += ['--conversation', conversation_id]
-    if mode == 'edit':
-        argv[argv.index('--mode') + 1] = 'accept-edits'
+    argv = agy.command(CONFIG['executable'], model, agent, None, timeout,
+                       conversation_id=conversation_id, mode='accept-edits' if mode == 'edit' else 'plan')
     argv += ['--add-dir', str(workspace)]
     if root:
         argv += ['--add-dir', str(root)]

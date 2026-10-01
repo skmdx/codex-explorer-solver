@@ -12,7 +12,10 @@ if args == ['models']:
     sys.exit(0)
 model=args[args.index('--model')+1];agent=args[args.index('--agent')+1]
 assert '--dangerously-skip-permissions' in args
-assert args[args.index('--mode')+1]==('accept-edits' if agent=='es-editor' else 'plan')
+if '--conversation' in args:
+    assert '--mode' not in args
+else:
+    assert args[args.index('--mode')+1]==('accept-edits' if agent=='es-editor' else 'plan')
 assert '--continue' not in args and '-p' not in args
 if '--conversation' in args:
     assert args[args.index('--conversation')+1] == 'fixture-1'

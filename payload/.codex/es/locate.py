@@ -175,10 +175,9 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             if attempts:
                 attempt_out.mkdir()
                 write_private(attempt_out/'request.jsonl', compact_json({'event':'user','message':{'content':prompt}})+'\n')
-            argv = agy.command(executable, candidate, agent, schema, remaining)
+            argv = agy.command(executable, candidate, agent, schema, remaining, conversation_id=conversation_id)
             argv.extend(['--add-dir', str(out/'workspace')])
             if args.mode != 'reader': argv.extend(['--add-dir', str(source_root)])
-            if conversation_id: argv.extend(['--conversation', conversation_id])
             metadata['argv'] = argv
             metadata['status'] = 'running'
             stream_state = agy.StreamState(candidate, agent, tools)
