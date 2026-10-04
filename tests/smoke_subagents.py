@@ -35,9 +35,9 @@ First use functions.exec to print typeof tools.mcp__agy_subagents__run, and whet
 ALL_TOOLS contains it. Attempt that nested function with empty arguments, catch the
 TypeError and print NESTED_BLOCKED. Do not use any shell fallback.
 Then call the direct agy-subagents models tool to check available model names.
-Call the direct run tool with model="claude-sonnet-4-6", mode="review", repo={str(repo)!r},
+Call the direct run tool with model="claude-sonnet-5-5-high", mode="review", repo={str(repo)!r},
 scratch_dir={str(root)!r}, task="Review whether normalize removes surrounding spaces in example.py. Name the relevant function. Keep the review brief. Do not edit files."
-After that finishes, call the direct run tool with default Gemini model, mode="edit",
+After that finishes, call the direct run tool with model="gemini-3.8-flash-high", mode="edit",
 repo={str(repo)!r}, scratch_dir={str(root)!r}, task="Edit only example.py so normalize strips surrounding spaces and lowercases the result with str.lower. Check dispatch(' HELLO ') == 'hello'. Do not commit or push."
 Wait for each final response. Do not poll, use a background job, retry, or change deadlines.
 Do not read or edit the fixture yourself. Report both final statuses and stop.'''
@@ -69,7 +69,8 @@ Do not read or edit the fixture yourself. Report both final statuses and stop.''
     reports=[json.loads(p.read_text()) for p in root.glob('agy-subagent-*/report.json')]
     assert len(reports)==2 and all(r['status']=='completed' for r in reports), reports
     assert {r['mode'] for r in reports}=={'review','edit'}
-    assert {r['model'] for r in reports}=={'claude-sonnet-4-6','gemini-3.8-flash-high'}
+    assert all(r['model'] in {'claude-sonnet-5-5-high','claude-opus-5-5-high',
+                             'gemini-3.1-pro-high','gemini-3.8-flash-high'} for r in reports)
     subprocess.run([sys.executable,'-c',"from example import dispatch; assert dispatch(' HELLO ') == 'hello'"],
                    cwd=repo,check=True)
     summary=dict(passed=True,session_log=str(log),run_calls=2,poll_calls=0,

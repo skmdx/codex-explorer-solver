@@ -72,10 +72,10 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
     review exposes read/search tools only. edit also exposes file edits and commands;
     use it only for work already authorized by the user, with a repo.
     scratch_dir is an existing absolute temporary directory outside repo.
-    Default model is Claude Opus 4.6 Thinking; use models to find other model slugs.
-    Reviews starting with a model in agy.toml's review_model_order advance to
-    the next model on quota or model-unavailable errors, resuming the AGY
-    conversation when one exists. Edits do not retry.
+    Default model is Claude Opus 5.5 (High); use models to find other model slugs.
+    Reviews and edits advance through agy.toml's review_model_order on quota
+    or model-unavailable errors, resuming the AGY conversation when one exists.
+    A model outside that order is tried first, followed by the configured order.
     The deadline is configured in agy.toml (30 minutes), not chosen per call.
     Returns the actual model, attempt history, total usage, response and saved logs.
     Verify advice and edits.
@@ -99,7 +99,7 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
         raise RuntimeError('could not initialize AGY runtime repository')
     selected_model: str = model or CONFIG['subagent_model']
     order = CONFIG['review_model_order']
-    candidates: list[str] = order[order.index(selected_model):] if mode == 'review' and selected_model in order else [selected_model]
+    candidates: list[str] = order[order.index(selected_model):] if selected_model in order else [selected_model, *order]
     candidates, skipped_models = agy.available_models(candidates)
     if root:
         task = f'REPOSITORY: {root}\n\n{task}'
@@ -125,14 +125,15 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
                                    attempt_dir, remaining, conversation_id,
                                    previous_error if conversation_id else None)
         conversation_id = report['conversation_id'] or conversation_id
-        previous_error = report['terminal_error']
+        if report['conversation_id']:
+            previous_error = report['terminal_error']
         attempts.append({key: report[key] for key in
                          ('model','status','error','usage','run_dir','conversation_id','resumed_from','elapsed_seconds')})
         if not report['model_unavailable'] or not candidates:
             break
         if time.monotonic() >= deadline:
             report['status'] = 'timeout'
-            report['error'] = 'AGY review exhausted the configured deadline'
+            report['error'] = 'AGY subagent exhausted the configured deadline'
             break
     usage: dict | None = report['usage']
     if len(attempts) > 1:
@@ -207,7 +208,7 @@ async def run_attempt(model: str, mode: str, agent: str, root: Path | None, work
                   elapsed_seconds=round(time.monotonic()-started, 3), exit_code=proc.returncode)
     availability_error = state.quota_error or result.get('error') or (stderr_text if not result else '')
     report['model_unavailable'] = bool(status == 'failed' and not state.error and re.search(
-        r'quota|resource_exhausted|unknown model|model[^\n]*(?:unavailable|not available|not found|unsupported)',
+        r'quota|resource_exhausted|unknown model|model[^\n]*(?:unavailable|not available|not found|unsupported|not recognized)',
         availability_error, re.IGNORECASE))
     (out/'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2)+'\n')
     (out/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n')

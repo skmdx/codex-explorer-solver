@@ -335,7 +335,7 @@ class AgyRunnerTests(Fixture):
         self.assertFalse(self.metrics()['task_usage_recorded'])
     def test_localize_validated_and_no_codex(self):
         r=self.invoke();self.assertEqual(r.returncode,0,r.stderr+r.stdout)
-        m=self.metrics();self.assertEqual(m['backend'],'agy');self.assertEqual(m['requested_model'],'claude-sonnet-4-6')
+        m=self.metrics();self.assertEqual(m['backend'],'agy');self.assertEqual(m['requested_model'],'claude-sonnet-5-5-high')
         self.assertNotIn('codex',m['argv']);self.assertFalse((self.repo/'.codex/agents').exists())
         h=json.loads((self.base/'run/handoff.json').read_text());self.assertEqual(h['primary'][0]['sha256'],hashlib.sha256((self.repo/'src/example.py').read_bytes()).hexdigest())
     def test_reader_returns_verified_citations_without_source_in_argv(self):
@@ -479,7 +479,7 @@ class AgyRunnerTests(Fixture):
         self.assertEqual(r.returncode,0,r.stdout)
         metrics=self.metrics()
         self.assertEqual([a['model'] for a in metrics['attempts']],
-                         ['claude-sonnet-4-6','claude-sonnet-4-6','gemini-3.8-flash-high'])
+                         ['claude-sonnet-5-5-high','claude-sonnet-5-5-high','gemini-3.8-flash-high'])
         self.assertEqual(metrics['handoff_repairs'],1)
         self.assertTrue(metrics['conversation_resumed'])
         self.assertIn('VALIDATION ERROR:',(self.base/'run/attempt-3/request.jsonl').read_text())
@@ -531,19 +531,19 @@ if __name__=='__main__':unittest.main()
 
 class CollectionFallbackTests(Fixture):
     def test_native_quota_switches_before_retry_and_skips_until_reset(self):
-        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'native_quota','gemini-3.8-flash-high':'inherited_interruption'})}):
+        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-5-5-high':'native_quota','gemini-3.8-flash-high':'inherited_interruption'})}):
             start=time.monotonic(); proc=self.invoke()
             self.assertLess(time.monotonic()-start,5)
             self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
             report=json.loads(proc.stdout)
             self.assertEqual(len(report['attempts']),2)
             self.assertIn('Resets in',report['attempts'][0]['error'])
-            os.environ['FAKE_MODEL_CASES']=json.dumps({'claude-sonnet-4-6':'native_quota'})
+            os.environ['FAKE_MODEL_CASES']=json.dumps({'claude-sonnet-5-5-high':'native_quota'})
             proc=self.invoke(out='again')
             self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
             report=json.loads(proc.stdout)
             self.assertEqual([a['model'] for a in report['attempts']],['gemini-3.8-flash-high'])
-            self.assertEqual(report['skipped_models'][0]['model'],'claude-sonnet-4-6')
+            self.assertEqual(report['skipped_models'][0]['model'],'claude-sonnet-5-5-high')
 
     def test_quota_cache_expires_and_transient_rate_limit_is_not_cached(self):
         with patch.dict(os.environ, XDG_CACHE_HOME=str(self.base/'cache')):
@@ -579,7 +579,7 @@ class CollectionFallbackTests(Fixture):
 
     def test_completed_resume_with_inherited_quota_is_validated(self):
         with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({
-                'claude-sonnet-4-6':'quota', 'gemini-3.8-flash-high':'inherited_quota'})}):
+                'claude-sonnet-5-5-high':'quota', 'gemini-3.8-flash-high':'inherited_quota'})}):
             proc=self.invoke()
         self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
         report=json.loads(proc.stdout)
@@ -590,11 +590,11 @@ class CollectionFallbackTests(Fixture):
         self.assertIn('quota',result['inherited_error'])
 
     def test_quota_resumes_collection_on_flash(self):
-        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'quota_after_progress'})}):
+        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-5-5-high':'quota_after_progress'})}):
             proc=self.invoke()
         self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
         report=json.loads(proc.stdout)
-        self.assertEqual([x['model'] for x in report['attempts']],['claude-sonnet-4-6','gemini-3.8-flash-high'])
+        self.assertEqual([x['model'] for x in report['attempts']],['claude-sonnet-5-5-high','gemini-3.8-flash-high'])
         self.assertEqual(report['effective_model'],'gemini-3.8-flash-high')
         self.assertTrue(self.metrics()['conversation_resumed'])
         self.assertEqual(report['usage']['total_tokens'],260)
@@ -609,13 +609,13 @@ class CollectionFallbackTests(Fixture):
 
     def test_reader_fallback(self):
         for mode,extra in [('reader',['--mode','reader','--path','src/example.py'])]:
-            with self.subTest(mode=mode), patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'quota'})}):
+            with self.subTest(mode=mode), patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-5-5-high':'quota'})}):
                 proc=self.invoke(extra=extra,out=mode)
                 self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
                 self.assertEqual(json.loads(proc.stdout)['effective_model'],'gemini-3.8-flash-high')
 
     def test_fallback_shares_deadline(self):
-        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-4-6':'quota','gemini-3.8-flash-high':'timeout'})}):
+        with patch.dict(os.environ, {'FAKE_MODEL_CASES':json.dumps({'claude-sonnet-5-5-high':'quota','gemini-3.8-flash-high':'timeout'})}):
             proc=self.invoke(extra=['--timeout','0.3'])
         self.assertNotEqual(proc.returncode,0)
         report=json.loads(proc.stdout)

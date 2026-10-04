@@ -202,7 +202,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ProcessLookupError):os.kill(int(pid.read_text()),0)
         self.assertEqual(len(list(self.root.glob('agy-subagent-*/attempt-*'))),2)
 
-    async def test_auth_protocol_timeout_and_edit_do_not_fallback(self):
+    async def test_auth_protocol_and_timeout_do_not_fallback(self):
         opus=subagents.CONFIG['review_model_order'][0]
         for case in ('auth','bad_model','invalid_json','native_timeout','nonzero_success'):
             with self.subTest(case=case):
@@ -210,9 +210,46 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
                 result=await self.run_task(model=opus)
                 self.assertEqual(len(result['attempts']),1)
                 self.assertNotEqual(result['status'],'completed')
-        os.environ['FAKE_CASE']='quota'
-        result=await self.run_task(model=opus,mode='edit',repo=str(self.repo))
-        self.assertEqual(len(result['attempts']),1)
+
+    async def test_unlisted_model_falls_back_to_configured_order(self):
+        opus, pro, _ = subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({'claude-sonnet-5-5-high':'quota_after_progress',opus:'quota'})
+        result = await self.run_task(model='claude-sonnet-5-5-high')
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual([a['model'] for a in result['attempts']], ['claude-sonnet-5-5-high', opus, pro])
+        self.assertIn('Verified checkpoint', result['response'])
+
+    async def test_edit_quota_resumes_partial_changes(self):
+        opus, pro, _ = subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'quota_after_progress'})
+        result = await self.run_task(mode='edit', repo=str(self.repo))
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual([a['model'] for a in result['attempts']], [opus, pro])
+        self.assertEqual(result['attempts'][1]['resumed_from'], 'fixture-1')
+        self.assertEqual(self.source.read_text(), 'edited\n')
+        argv = json.loads((Path(result['run_dir'])/'report.json').read_text())['argv']
+        self.assertEqual(argv[argv.index('--agent')+1], 'es-editor')
+        self.assertIn(str(self.repo), argv)
+        self.assertNotIn('--mode', argv)
+
+    async def test_unrecognized_model_between_quota_and_resume(self):
+        opus, pro, flash = subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'quota_after_progress', pro:'model_not_recognized', flash:'inherited_quota'})
+        result = await self.run_task(mode='edit', repo=str(self.repo))
+        self.assertEqual(result['status'], 'completed', result)
+        self.assertEqual([a['model'] for a in result['attempts']], [opus, pro, flash])
+        self.assertEqual(result['attempts'][2]['resumed_from'], 'fixture-1')
+        self.assertEqual(self.source.read_text(), 'edited\n')
+
+    async def test_edit_native_quota_skips_cached_model(self):
+        opus, pro, _ = subagents.CONFIG['review_model_order']
+        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'native_quota'})
+        first = await self.run_task(mode='edit', repo=str(self.repo))
+        self.assertEqual(first['status'], 'completed', first)
+        second = await self.run_task(mode='edit', repo=str(self.repo))
+        self.assertEqual(second['status'], 'completed', second)
+        self.assertEqual([a['model'] for a in second['attempts']], [pro])
+        self.assertEqual(second['skipped_models'][0]['model'], opus)
 
     async def test_mcp_call_completes_the_whole_fallback_chain(self):
         opus, pro, flash=subagents.CONFIG['review_model_order']
@@ -225,14 +262,14 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         async with stdio_client(params) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
-                reply=await session.call_tool('run',dict(task='Review the given facts.',
-                    scratch_dir=str(self.root),model=opus))
+                reply=await session.call_tool('run',dict(task='Edit the requested file.',
+                    scratch_dir=str(self.root),model=opus,mode='edit',repo=str(self.repo)))
                 self.assertFalse(reply.isError)
                 result=json.loads(reply.content[0].text)
                 self.assertEqual(result['status'],'completed',result)
                 self.assertEqual(result['model'],flash)
                 self.assertEqual(len(result['attempts']),3)
-                self.assertIn('Verified checkpoint',result['response'])
+                self.assertEqual(self.source.read_text(), 'edited\n')
 
     async def test_running_mcp_survives_removal_of_its_plugin_cache(self):
         cached=self.root/'old-plugin'

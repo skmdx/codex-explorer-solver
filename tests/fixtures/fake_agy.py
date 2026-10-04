@@ -29,7 +29,7 @@ if case.startswith('repair_'):
     if '--conversation' in args:
         assert 'VALIDATION ERROR:' in text and 'REJECTED HANDOFF' in text
         case = 'timeout' if failure == 'timeout' else 'ok'
-        if failure == 'quota' and model == 'claude-sonnet-4-6':
+        if failure == 'quota' and model == 'claude-sonnet-5-5-high':
             case = 'quota'
     else:
         case = 'bad_range' if failure in ('timeout','quota') else failure
@@ -41,6 +41,9 @@ def emit(value):
     print(json.dumps(value),flush=True)
 if case=='model_unavailable':
     emit({'event':'result','result':{'status':'ERROR','error':'Unknown model','num_turns':0}});sys.exit(1)
+if case=='model_not_recognized':
+    print(f'invalid model selection: model {model} is not recognized as a known model or custom model in settings', file=sys.stderr)
+    sys.exit(1)
 tools=['finish'] if agent=='es-reader' else ['view_file','grep_search','finish']
 if case=='write_tool':tools+=['write_to_file']
 if case=='mcp_tool':tools+=['mcp_send_message']
@@ -82,6 +85,8 @@ def review_usage():
 if case in ('quota','quota_after_progress'):
     if case=='quota_after_progress':
         pathlib.Path('conversation_state.txt').write_text('Verified checkpoint: version comparison precedes adoption.')
+        if agent == 'es-editor':
+            pathlib.Path(os.environ['FAKE_ORIGINAL_FILE']).write_text('partial edit\n')
     emit({'event':'result','result':{'status':'ERROR','error':'Individual quota reached. Resets later.',
           'response':'Partial review.', 'num_turns':1,
           'usage':review_usage()}});sys.exit(1)
@@ -91,6 +96,8 @@ if agent in ('es-reviewer','es-editor'):
         assert 'Continue the original task' in text
         response += pathlib.Path('conversation_state.txt').read_text()
     if agent == 'es-editor':
+        if '--conversation' in args and pathlib.Path('conversation_state.txt').exists():
+            assert pathlib.Path(os.environ['FAKE_ORIGINAL_FILE']).read_text() == 'partial edit\n'
         pathlib.Path(os.environ['FAKE_ORIGINAL_FILE']).write_text('edited\n')
         response = 'Edited the requested file.'
     if case == 'missing_response': response = ''
