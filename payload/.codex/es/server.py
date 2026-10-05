@@ -26,7 +26,7 @@ from pydantic import validate_call
 from evidence import evidence_blocks, format_evidence, load_handoff, verify_handoff
 from agy_snapshot import select_paths
 from scratch_space import ScratchSpace
-from word_ids import store_reference
+from word_ids import create_directory, store_reference
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
@@ -238,7 +238,7 @@ async def _collect(
                 raise ValueError(f"No source for {item['fact']!r}: {unmatched or item['scope']}")
             scope.extend(item['scope'] or ['.'])
     scope = list(dict.fromkeys(scope))
-    work = Path(tempfile.mkdtemp(prefix='explore-solve-', dir=scratch))
+    work = create_directory(scratch, prefix='explore-solve-')
     run = work/'result'
     task = work/'task.txt'
     task.write_text('SOLVER QUESTION (do not solve it):\n'+question

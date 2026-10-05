@@ -11,7 +11,7 @@ import os
 import re
 from pathlib import Path
 import signal
-import tempfile
+from word_ids import create_directory
 import time
 import tomllib
 from typing import Literal
@@ -95,7 +95,7 @@ async def _run(task: str, scratch: Path, model: str | None,
         raise ValueError('scratch directory must be outside repo')
     if mode == 'edit' and root is None:
         raise ValueError('edit requires repo')
-    out = Path(tempfile.mkdtemp(prefix='agy-subagent-', dir=scratch))
+    out = create_directory(scratch, prefix='agy-subagent-')
     workspace = out/'workspace'
     definitions = workspace/'.agents/agents'
     definitions.mkdir(parents=True)
