@@ -1,4 +1,4 @@
-bb6197538100fe446d2e0c129cbb793903c398a088b83a5c053de6c04293925b  .codex-plugin/plugin.json
+72526c686c4314645a8761cc4190efb07ef1a4c9fd936e83f8aa5bd330a8a931  .codex-plugin/plugin.json
 ae5e7889d5bf0773f6f50f58c7b7e61cbdc472f9707365f2c89cf39c3c25e1e4  .mcp.json
 834c4f469126c6cc839e2ed0ae2a392ebe9a80f31a41f4d492990a1d517cded3  README.ja.md
 af67d7ffeebbcb24a0bb0014bced304bd4a4d1dc1eeec7680a801532966c7ae3  docs/DESIGN.ja.md
@@ -24,7 +24,7 @@ f0cec902396c1c5d84a770e4aa989a4816bb336eb7b52314c2792d4cdd9edf76  payload/.codex
 954bab3d8fbb42658a87b32bce6b3fc7c6b52e40c8987d7a5c15985f57690b5f  payload/.codex/es/hook_store.py
 c25fd0d9679f9c926e331eea260680f586bc52b38a502c31db08b496a317bbf2  payload/.codex/es/locate.py
 fe284aab14a70bd85ec3da4dc819aace80386bfc0eb28f02e1fcfeaca18792b2  payload/.codex/es/read_guard.py
-b56a40f1a3ab25e9a82499ac21fe77f18a8480057ca24479fb3bc19ee3fabe8c  payload/.codex/es/scratch_space.py
+1e472772debc15ebb59869d22d93a4772a2c424ee9602beb6e9aeab9e0fa058b  payload/.codex/es/scratch_space.py
 adf532d7913e0a964fab2f2ac70d8488397422dc3aae40571a2fcf07362c6518  payload/.codex/es/server.py
 b0ee10a44b9c323ffb70579e7563ad3f6ff38b32d02453ddceef66949df90ff7  payload/.codex/es/subagents.py
 acdf87f0df1adf71f7e1a541c95a755c3b6bbcf2dacb7c2a4f5e28fe097824ad  payload/.codex/es/word_ids.py
