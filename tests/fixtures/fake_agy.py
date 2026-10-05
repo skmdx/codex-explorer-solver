@@ -75,7 +75,9 @@ if case=='unexpected_tool':emit({'event':'step_update','step_update':{'step_type
 if case in ('write_step','mcp_step'):
     emit({'event':'step_update','step_update':{'step_type':'tool','step_index':1,'tool_name':'write_to_file' if case=='write_step' else 'mcp_send_message'}})
 if case=='many_tools':
-    for n in range(50):emit({'event':'step_update','step_update':{'step_type':'tool','step_index':n,'tool_name':'view_file'}})
+    for n in range(50):
+        emit({'event':'step_update','step_update':{'step_type':'tool','step_index':n,'tool_name':'view_file'}})
+        time.sleep(0.005)
 if case=='auth':
     emit({'event':'result','result':{'status':'ERROR','error':'authentication required','num_turns':0}});sys.exit(1)
 if case=='fail_usage':

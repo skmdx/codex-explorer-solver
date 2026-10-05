@@ -98,7 +98,7 @@ Codex 0.156.1で対応しています。ユーザーの`config.toml`への追加
 
 ## 実行回数と結果
 
-- 収集は既定24観測ステップでローカル停止します。`max_steps`で変更でき、修正・fallbackも同じ枠を使います。AGYの遠隔処理・課金の厳密な上限ではありません。
+- 収集・再開のステップ数は既定で無制限です。`max_steps`を明示した呼出しだけ観測ステップ数でローカル停止し、修正・fallbackも同じ枠を使います。AGYの遠隔処理・課金の厳密な上限ではありません。
 - `step_limit`または未解決事項がある結果の`resume_id`を`resume`へ渡すと、保存した要求・会話・ソースから継続します。自動再開はせず、原文変更は再開前に拒否します。途中終了で未取得の使用量は不明です。
 - LSP応答は`remember_navigation(navigation, scratch_dir)`で一度保存し、返されたIDを`collect.navigation`へ渡せます。コンテキストに原文が残る保証とは別で、再読時は引き続きhashを検証します。
 - 収集はSonnetから開始し、利用上限時はGemini Flash（High）へ切り替えます。設定は`agy.toml`、1回だけの指定は`collect.model`を使います。

@@ -85,9 +85,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
     config = settings(args.config or HERE/'agy.toml')
     key = 'reader_model' if args.mode == 'reader' else 'explorer_model'
     max_steps = getattr(args, 'max_steps', None)
-    if max_steps is None:
-        max_steps = config.get('collection_max_steps', 24)
-    if type(max_steps) is not int or max_steps < 1:
+    if max_steps is not None and (type(max_steps) is not int or max_steps < 1):
         raise EvidenceError('max_steps must be a positive integer')
     resume_from = getattr(args, 'resume_from', None)
     previous = None
@@ -146,7 +144,9 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         if args.mode != 'reader':
             subprocess.run(['git', 'init', '-q', str(source_root)], check=True)
         request = 'QUESTION:\n' + task
-        request += f'\nFinish with the evidence found and explicit unresolved facts within {max_steps} tool steps. Do not repeat known source reads.'
+        request += '\nFinish with the evidence found and explicit unresolved facts. Do not repeat known source reads.'
+        if max_steps is not None:
+            request += f' Finish within {max_steps} tool steps.'
         scope = dict(mode=args.mode, paths=args.path, scopes=args.scope,
                     file_count=manifest['file_count'], source_bytes=manifest['total_bytes'],
                     skipped_count=len(manifest['skipped']), unmatched_scopes=manifest['unmatched_scopes'],
@@ -190,9 +190,11 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         prompt = request
         if previous:
             prompt = ('Continue this evidence collection using the unchanged\nSOURCE ROOT: ' + str(source_root)
-                      + f'\nFinish within {max_steps} additional tool steps. Reuse earlier observations. '
+                      + '\nReuse earlier observations. '
                       'Return a complete handoff including still-valid earlier references and unresolved facts.\n'
                       + 'Previous handoff: ' + compact_json(retained_handoff))
+            if max_steps is not None:
+                prompt += f'\nFinish within {max_steps} additional tool steps.'
         write_private(out/'request.jsonl', compact_json({'event':'user','message':{'content':prompt}})+'\n')
         steps_used = 0
         if not candidates:
@@ -213,7 +215,8 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             if args.mode != 'reader': argv.extend(['--add-dir', str(source_root)])
             metadata['argv'] = argv
             metadata['status'] = 'running'
-            stream_state = agy.StreamState(candidate, agent, tools, max_steps=max_steps-steps_used)
+            stream_state = agy.StreamState(candidate, agent, tools,
+                                           max_steps=max_steps-steps_used if max_steps is not None else None)
             process_code, reason, attempt_elapsed = agy.supervise(argv,out/'workspace',attempt_out,remaining,stream_state)
             steps_used += len(stream_state.step_ids)
             stream_state.recover_inherited_error(previous_error if conversation_id else None, process_code)
@@ -247,7 +250,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
                     attempts[-1]['validation_error'] = validation_error
                     if repairs >= MAX_HANDOFF_REPAIRS:
                         break
-                    if steps_used >= max_steps:
+                    if max_steps is not None and steps_used >= max_steps:
                         reason = 'step_limit'
                         break
                     repairs += 1
@@ -264,7 +267,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
             if (reason and reason != 'quota_exhausted') or stream_state.error or result.get('status') == 'SUCCESS' or not quota:
                 break
             candidate_index += 1
-            if steps_used >= max_steps:
+            if max_steps is not None and steps_used >= max_steps:
                 reason = 'step_limit'
                 break
             if not validation_error:

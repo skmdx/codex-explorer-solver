@@ -64,6 +64,20 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(Path(first['run_dir']).exists())
         self.assertFalse(Path(result['run_dir']).exists())
 
+    async def test_default_and_resume_have_no_step_limit(self):
+        with patch.dict(os.environ, FAKE_CASE='many_tools'):
+            result = await self.run_collection()
+        self.assertEqual(result['status'], 'validated', result)
+        self.assertIsNone(result['max_steps'])
+        self.assertEqual(result['observed_tool_calls'], 50)
+        with patch.dict(os.environ, FAKE_CASE='bounded'):
+            bounded = await self.run_collection(max_steps=1)
+        with patch.dict(os.environ, FAKE_CASE='many_tools'):
+            resumed = await resume(bounded['resume_id'])
+        self.assertEqual(resumed['status'], 'validated', resumed)
+        self.assertIsNone(resumed['max_steps'])
+        self.assertEqual(resumed['observed_tool_calls'], 50)
+
     async def test_resume_rejects_changed_source_before_model(self):
         with patch.dict(os.environ, FAKE_CASE='bounded'):
             first = await self.run_collection(max_steps=1)

@@ -149,7 +149,8 @@ async def collect(
 
     Call this tool directly. The host exposes this namespace as direct-only,
     outside code-mode cells. One call waits for completion without a poll handle.
-    max_steps bounds observed tool steps (default 24), including repair/fallback.
+    Steps are unlimited by default. Explicit max_steps bounds observed tool
+    steps, including repair/fallback.
     This is local best-effort stopping, not remote token cancellation. At the
     limit, resume_id preserves the conversation; call resume only if more evidence
     is needed. Usage may be unavailable until AGY returns a terminal result.
@@ -348,7 +349,8 @@ async def resume(resume_id: str, max_steps: int | None = None) -> dict:
 
     Reuses the immutable source snapshot and verifies current source hashes before
     invoking AGY. Changed source requires a new collect. max_steps is an additional
-    observed-step allowance, not a token cap. No automatic resume at a limit.
+    observed-step allowance, not a token cap. Omit it for unlimited steps, even
+    if the prior collection was bounded. No automatic resume at a limit.
     Read prior evidence first; do not resume when it already answers the question.
     """
     run = Path(resume_id).resolve(strict=True)
@@ -360,8 +362,7 @@ async def resume(resume_id: str, max_steps: int | None = None) -> dict:
     if active_paths[run]:
         raise ValueError('collection is already being resumed')
     arguments = json.loads((run.parent/'collection.json').read_text())
-    if max_steps is not None:
-        arguments['max_steps'] = max_steps
+    arguments['max_steps'] = max_steps
     result_dirs.add(run.parent)
     source_work = Path(json.loads((run/'metrics.json').read_text())['source_root']).parent.parent
     result_dirs.add(source_work)
