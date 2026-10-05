@@ -1,6 +1,6 @@
 {
   "name": "codex-explorer-solver",
-  "version": "0.1.0+codex.20261005035647",
+  "version": "0.1.0+codex.20261005041301",
   "description": "Source evidence collection and blocking Gemini/Claude delegation through AGY.",
   "author": {
     "name": "skmdx"

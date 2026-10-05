@@ -52,11 +52,6 @@ if case=='bad_agent':agent='self'
 init={'event':'init','conversation_id':'fixture-1','init':{'cwd':os.getcwd(),'model':model,'agent':agent,'tools':tools,'permission_mode':'request-review'}}
 if case=='bypass':init['init']['permission_mode']='always-proceed'
 if case!='no_init':emit(init)
-if (case=='bounded' and '--conversation' not in args) or case=='bounded_always':
-    for n in range(4):
-        emit({'event':'step_update','step_update':{'step_type':'tool','step_index':n,'tool_name':'view_file'}})
-        time.sleep(0.1)
-    time.sleep(10)
 if case=='native_quota':
     def interrupted(*_):
         emit({'event':'result','result':{'conversation_id':'fixture-1','status':'ERROR','num_turns':1,
@@ -75,9 +70,7 @@ if case=='unexpected_tool':emit({'event':'step_update','step_update':{'step_type
 if case in ('write_step','mcp_step'):
     emit({'event':'step_update','step_update':{'step_type':'tool','step_index':1,'tool_name':'write_to_file' if case=='write_step' else 'mcp_send_message'}})
 if case=='many_tools':
-    for n in range(50):
-        emit({'event':'step_update','step_update':{'step_type':'tool','step_index':n,'tool_name':'view_file'}})
-        time.sleep(0.005)
+    for n in range(50):emit({'event':'step_update','step_update':{'step_type':'tool','step_index':n,'tool_name':'view_file'}})
 if case=='auth':
     emit({'event':'result','result':{'status':'ERROR','error':'authentication required','num_turns':0}});sys.exit(1)
 if case=='fail_usage':
@@ -115,8 +108,6 @@ if agent in ('es-reviewer','es-editor'):
           'response':response,'num_turns':1,'usage':review_usage()}})
     sys.exit(1 if case == 'nonzero_success' else 0)
 root=pathlib.Path.cwd().parent/'sources'
-if '--conversation' in args and not root.exists():
-    root=pathlib.Path(text.split('SOURCE ROOT: ',1)[1].splitlines()[0])
 manifest=json.loads((root.parent/'source-manifest.json').read_text())
 source_files={entry['path']:root/entry['export_path'] for entry in manifest['files']}
 if case=='snapshot_changed':

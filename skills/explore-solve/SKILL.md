@@ -12,16 +12,8 @@ conditions, and test locations. Do not delegate the Solver's final judgment.
 Reuse source already in context. For small questions, use Symbols or targeted reads
 directly. Use AGY for large unread source searches or when explicitly requested.
 Ask it for the missing evidence, not the entire user task. Group requests that share
-source and callers; split only when they need different source areas.
-Collection has no step limit by default. Explicit `max_steps` bounds observed
-tool steps, including repairs and model fallback within the call. AGY may
-have already started further work; this is not a hard remote token/spend cap.
-At `step_limit`, inspect existing evidence and unresolved facts before deciding
-whether more collection is needed. `resume(resume_id)` reuses the saved request,
-source snapshot and AGY conversation. Resume also defaults to unlimited steps;
-pass `max_steps` explicitly to bound that call. Do not
-automatically resume at the limit. Changed source requires a new collection.
-Usage can be unknown when interrupted; never interpret it as zero.
+source and callers; split only when they need different source areas. There is no
+fixed limit on AGY calls or internal tool steps.
 
 Collection starts with Sonnet and resumes on Gemini Flash High if Sonnet reaches
 a usage limit. The harness handles this fallback within the same deadline.
