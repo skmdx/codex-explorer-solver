@@ -9,7 +9,9 @@ Do not launch AGY through the shell or wrap it in a background job.
 
 Give a self-contained task with the needed facts and deliverable. Keep Claude
 review requests concise. Pass `repo` when files are needed; omit it for pure
-reasoning. `scratch_dir` is an existing temporary directory outside the repository.
+reasoning. Pass `scratch_ref` from Scratch's `create`; its directory must be outside
+the repository. After using the results, call Scratch's `delete` with the reference.
+Active runs are protected from deletion.
 
 The default model is Claude Opus 5.5 (High). Use `models` to select a requested model.
 The harness handles review and edit model fallback using `agy.toml`; do not repeat calls

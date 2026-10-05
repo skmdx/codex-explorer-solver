@@ -16,25 +16,29 @@ from mcp.client.stdio import stdio_client
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT/'payload/.codex/es'))
 import subagents
+from scratch_space import ScratchSpace
 
 
 class SubagentTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self.space = ScratchSpace(self.root, session='subagent-tests')
+        item = self.space.create()
+        self.ref, self.scratch = item['scratch_ref'], Path(item['path'])
         self.repo = self.root/'repo'
         self.repo.mkdir()
         self.source = self.repo/'file.txt'
         self.source.write_text('original\n')
         self.config = patch.dict(subagents.CONFIG, executable=str(KIT/'tests/fixtures/fake_agy.py'))
-        self.env = patch.dict(os.environ, FAKE_CASE='ok', FAKE_ORIGINAL_FILE=str(self.source),XDG_CACHE_HOME=str(self.root/'cache'))
+        self.env = patch.dict(os.environ, SCRATCH_ROOT=str(self.root), FAKE_CASE='ok', FAKE_ORIGINAL_FILE=str(self.source),XDG_CACHE_HOME=str(self.root/'cache'))
         self.config.start(); self.env.start()
 
     def tearDown(self):
         self.env.stop(); self.config.stop(); self.temp.cleanup()
 
     async def run_task(self, **kwargs):
-        return await subagents.run('Review the given facts.', str(self.root), **kwargs)
+        return await subagents.run('Review the given facts.', self.ref, **kwargs)
 
     async def test_review_returns_final_response_and_usage(self):
         result = await self.run_task(model='claude-test', repo=str(self.repo))
@@ -200,7 +204,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):await task
         with self.assertRaises(ProcessLookupError):os.kill(int(pid.read_text()),0)
-        self.assertEqual(len(list(self.root.glob('agy-subagent-*/attempt-*'))),2)
+        self.assertEqual(len(list(self.scratch.glob('agy-subagent-*/attempt-*'))),2)
 
     async def test_auth_protocol_and_timeout_do_not_fallback(self):
         opus=subagents.CONFIG['review_model_order'][0]
@@ -263,7 +267,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
             async with ClientSession(read,write) as session:
                 await session.initialize()
                 reply=await session.call_tool('run',dict(task='Edit the requested file.',
-                    scratch_dir=str(self.root),model=opus,mode='edit',repo=str(self.repo)))
+                    scratch_ref=self.ref,model=opus,mode='edit',repo=str(self.repo)))
                 self.assertFalse(reply.isError)
                 result=json.loads(reply.content[0].text)
                 self.assertEqual(result['status'],'completed',result)
@@ -284,7 +288,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
                 shutil.rmtree(cached)
                 for mode in ('review','edit'):
                     reply=await session.call_tool('run',dict(task='Use the supplied repository.',
-                        scratch_dir=str(self.root),repo=str(self.repo),mode=mode))
+                        scratch_ref=self.ref,repo=str(self.repo),mode=mode))
                     self.assertFalse(reply.isError,reply)
                     result=json.loads(reply.content[0].text)
                     self.assertEqual(result['status'],'completed',result)

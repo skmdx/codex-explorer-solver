@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from contextlib import ExitStack
 import json
 from pathlib import Path
-import shutil
 import signal
 import sys
 import tempfile
@@ -24,27 +24,24 @@ from pydantic import validate_call
 
 from evidence import evidence_blocks, format_evidence, load_handoff, verify_handoff
 from agy_snapshot import select_paths
+from scratch_space import ScratchSpace
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
-result_dirs: set[Path] = set()
-params_files: set[Path] = set()
 active_paths: Counter[Path] = Counter()
 
 def save_failed_arguments(arguments: dict[str, Any]) -> dict:
     """Preserve an inline request without hiding its original failure."""
     try:
-        scratch = Path(arguments['scratch_dir']).resolve(strict=True)
         contents = json.dumps(arguments, ensure_ascii=False, indent=2) + '\n'
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+        with ScratchSpace().lease(arguments['scratch_ref']) as scratch, tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
                                          prefix='collect-failed-', suffix='.json',
                                          dir=scratch, delete=False) as file:
             file.write(contents)
-        params_files.add(Path(file.name))
         return {'params_file': file.name,
-                'retry': 'Call collect with params_file and optional updates containing only changed arguments. Success deletes the saved request; cleanup removes unused session files.'}
+                'retry': 'Call collect with params_file and optional updates containing only changed arguments. Success deletes the saved request; scratch.delete removes unused temporary files.'}
     except (OSError, ValueError, TypeError, KeyError) as error:
-        return {'params_save_error': f'Could not save arguments in scratch_dir: {error}'}
+        return {'params_save_error': f'Could not save arguments in scratch_ref: {error}'}
 
 
 class CollectionMCP(FastMCP):
@@ -59,41 +56,6 @@ class CollectionMCP(FastMCP):
 
 
 mcp = CollectionMCP("explore-solve")
-
-
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=False))
-async def cleanup() -> dict:
-    """Delete collection directories and argument files tracked by this MCP session.
-
-    Call directly after evidence and logs are no longer needed. Takes no paths.
-    Tracks directories created by collect, params_file inputs read by collect,
-    and argument files saved after inline failures. Active paths are skipped.
-    Other sessions and unrelated files are untouched; scratch roots are retained.
-    Returns deleted, missing, skipped_active and errors. Failed deletions stay
-    tracked for retry. Tracking ends when this MCP server exits.
-    """
-    result: dict = dict(deleted=[], missing=[], skipped_active=[], errors={})
-    for out in sorted(result_dirs | params_files):
-        path = str(out)
-        if any(out == active or out in active.parents or active in out.parents
-               for active in active_paths):
-            result['skipped_active'].append(path)
-            continue
-        try:
-            if out in result_dirs:
-                shutil.rmtree(out)
-            else:
-                out.unlink()
-        except FileNotFoundError:
-            result['missing'].append(path)
-        except OSError as error:
-            result['errors'][path] = str(error)
-            continue
-        else:
-            result['deleted'].append(path)
-        result_dirs.discard(out)
-        params_files.discard(out)
-    return result
 
 
 class EvidenceRequest(TypedDict):
@@ -127,7 +89,7 @@ def catalog(run: Path) -> dict:
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
 async def collect(
     repo: str | None = None, question: str | None = None,
-    evidence_needed: list[EvidenceRequest] | None = None, scratch_dir: str | None = None,
+    evidence_needed: list[EvidenceRequest] | None = None, scratch_ref: str | None = None,
     navigation: dict | str | None = None,
     known_findings: str | None = None,
     paths: list[str] | None = None, include_untracked: bool | None = None,
@@ -153,7 +115,7 @@ async def collect(
     Explicit scopes include ignored/untracked files and nested repositories.
     [] or ["."] uses Git's tracked files (plus include_untracked if requested).
     These are source export patterns, not a limit on LSP hits.
-    scratch_dir is an existing absolute temporary directory outside repo.
+    scratch_ref is returned by scratch.create; its directory must be outside repo.
     Returns an index without source dumps. Use read_evidence for selected IDs.
     Use navigation=null only when there is no useful symbol seed. known_findings
     carries relevant prior observations (empty string for a new investigation).
@@ -163,23 +125,34 @@ async def collect(
     model overrides the configured model.
     Encodings are detected per file; encodings={path: codec} corrects known mistakes.
     For large requests, save these arguments as a UTF-8 JSON object and call with
-    only params_file="/absolute/path/request.json". Do not mix non-null inline
+    only params_file="/absolute/path/request.json", stored inside a scratch-created
+    directory. Do not mix non-null inline
     arguments with params_file. File contents use the same validation as inline
     arguments; params_file cannot occur inside the file. Paths retain their usual
     meaning (they are not relative to the JSON file).
-    Failed inline calls save their arguments as collect-failed-*.json in scratch_dir
+    Failed inline calls save their arguments as collect-failed-*.json under scratch_ref
     and return params_file for retry. If saving fails, params_save_error explains why.
     Retry with params_file and optional updates containing only changed top-level
     arguments; updates replace whole values, including lists, and may set null.
     The tool saves corrections; no file editing or full argument resubmission is needed.
     A validated collection deletes
-    its params_file automatically. Failed requests retain it. cleanup removes this
-    session's collection directories and unused argument files when no longer needed.
+    its params_file automatically. Failed requests retain it. Use scratch.delete
+    to remove temporary outputs after reading evidence. Active calls are protected.
     """
     arguments: dict[str, Any] = dict(repo=repo, question=question, evidence_needed=evidence_needed,
-                     scratch_dir=scratch_dir, navigation=navigation,
+                     scratch_ref=scratch_ref, navigation=navigation,
                      known_findings=known_findings, paths=paths,
                      include_untracked=include_untracked, model=model, encodings=encodings)
+    with ExitStack() as leases:
+        if params_file is not None:
+            leases.enter_context(ScratchSpace().lease_path(params_file))
+        elif scratch_ref is not None:
+            leases.enter_context(ScratchSpace().lease(scratch_ref))
+        return await collect_request(arguments, params_file, updates)
+
+
+async def collect_request(arguments: dict[str, Any], params_file: str | None,
+                          updates: dict[str, Any] | None) -> dict:
     file = None
     if params_file is not None:
         if any(value is not None for value in arguments.values()):
@@ -188,7 +161,6 @@ async def collect(
         if not file.is_absolute():
             raise ValueError('params_file must be an absolute path')
         contents = file.read_text(encoding='utf-8')
-        params_files.add(file)
         arguments = json.loads(contents)
         if not isinstance(arguments, dict):
             raise ValueError('params_file must contain a JSON object')
@@ -206,7 +178,10 @@ async def collect(
         active_paths[file] += 1
     result = None
     try:
-        result = await _collect(**arguments)
+        call = dict(arguments)
+        ref = call.pop('scratch_ref', None)
+        with ScratchSpace().lease(ref) as directory:
+            result = await _collect(scratch_dir=str(directory), **call)
         if params_file is None and result['status'] != 'validated':
             result.update(save_failed_arguments(arguments))
         return result
@@ -220,8 +195,6 @@ async def collect(
                         file.unlink(missing_ok=True)
                     except OSError as error:
                         result['params_delete_error'] = str(error)
-                    else:
-                        params_files.discard(file)
 
 
 @validate_call
@@ -238,7 +211,8 @@ async def _collect(
     if not question.strip() or not evidence_needed:
         raise ValueError('provide the next question and missing evidence')
     if isinstance(navigation, str):
-        navigation = json.loads(Path(navigation).read_text(encoding='utf-8'))
+        with ScratchSpace().lease_path(navigation) as nav:
+            navigation = json.loads(nav.read_text(encoding='utf-8'))
     scope = []
     for item in evidence_needed:
         if not item['fact'].strip():
@@ -253,7 +227,6 @@ async def _collect(
             scope.extend(item['scope'] or ['.'])
     scope = list(dict.fromkeys(scope))
     work = Path(tempfile.mkdtemp(prefix='explore-solve-', dir=scratch))
-    result_dirs.add(work)
     run = work/'result'
     task = work/'task.txt'
     task.write_text('SOLVER QUESTION (do not solve it):\n'+question
@@ -300,19 +273,18 @@ async def _collect(
 
 
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True))
-def remember_navigation(navigation: dict, scratch_dir: str) -> dict:
+def remember_navigation(navigation: dict, scratch_ref: str) -> dict:
     """Store unchanged Symbols responses once, returning a navigation ID for collect.
 
     Pass {root: absolute LSP workspace, queries: [{tool,args,result/error}]}.
     Does not mark source as retained in the model's context; original-source
-    reads still validate hashes. cleanup deletes this session's saved navigation.
+    reads still validate hashes. scratch_ref comes from scratch.create;
+    scratch.delete removes saved navigation with the other temporary outputs.
     """
     if not isinstance(navigation.get('root'), str) or not Path(navigation['root']).is_absolute() or not isinstance(navigation.get('queries'), list):
         raise ValueError('navigation requires absolute root and queries list')
-    scratch = Path(scratch_dir).resolve(strict=True)
-    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', prefix='navigation-', suffix='.json', dir=scratch, delete=False) as f:
+    with ScratchSpace().lease(scratch_ref) as scratch, tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', prefix='navigation-', suffix='.json', dir=scratch, delete=False) as f:
         json.dump(navigation, f, ensure_ascii=False)
-    params_files.add(Path(f.name))
     return {'navigation_id':f.name}
 
 
@@ -329,6 +301,12 @@ def read_evidence(run_dir: str, ids: list[int], offset: int | None = None,
     Reuse returned source; do not reread those ranges with shell tools. Increase max_chars
     if the client can display more. All evidence remains saved in run_dir.
     """
+    with ScratchSpace().lease_path(run_dir):
+        return read_evidence_files(run_dir, ids, offset, max_chars)
+
+
+def read_evidence_files(run_dir: str, ids: list[int], offset: int | None,
+                        max_chars: int) -> dict:
     if (offset is not None and offset < 0) or max_chars < 1 or not ids:
         raise ValueError('provide IDs, nonnegative offset and positive max_chars')
     run = Path(run_dir)

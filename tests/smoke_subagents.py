@@ -34,14 +34,15 @@ def main():
 First use functions.exec to print typeof tools.mcp__agy_subagents__run, and whether
 ALL_TOOLS contains it. Attempt that nested function with empty arguments, catch the
 TypeError and print NESTED_BLOCKED. Do not use any shell fallback.
+Call scratch.create once and reuse its reference for both runs.
 Then call the direct agy-subagents models tool to check available model names.
 Call the direct run tool with model="claude-sonnet-5-5-high", mode="review", repo={str(repo)!r},
-scratch_dir={str(root)!r}, task="Review whether normalize removes surrounding spaces in example.py. Name the relevant function. Keep the review brief. Do not edit files."
+scratch_ref=the ID returned by scratch.create, task="Review whether normalize removes surrounding spaces in example.py. Name the relevant function. Keep the review brief. Do not edit files."
 After that finishes, call the direct run tool with model="gemini-3.8-flash-high", mode="edit",
-repo={str(repo)!r}, scratch_dir={str(root)!r}, task="Edit only example.py so normalize strips surrounding spaces and lowercases the result with str.lower. Check dispatch(' HELLO ') == 'hello'. Do not commit or push."
+repo={str(repo)!r}, scratch_ref=the ID returned by scratch.create, task="Edit only example.py so normalize strips surrounding spaces and lowercases the result with str.lower. Check dispatch(' HELLO ') == 'hello'. Do not commit or push."
 Wait for each final response. Do not poll, use a background job, retry, or change deadlines.
 Do not read or edit the fixture yourself. Report both final statuses and stop.'''
-    env = dict(os.environ, PATH=str(bin_dir)+os.pathsep+os.environ['PATH'])
+    env = dict(os.environ, SCRATCH_ROOT=str(root), PATH=str(bin_dir)+os.pathsep+os.environ['PATH'])
     with (root/'events.jsonl').open('w') as out, (root/'stderr.log').open('w') as err:
         result = subprocess.run([args.codex,'exec','--enable','code_mode','--enable','code_mode_only',
                                  '--json','--dangerously-bypass-approvals-and-sandbox',prompt],
@@ -66,7 +67,7 @@ Do not read or edit the fixture yourself. Report both final statuses and stop.''
     outputs='\n'.join(json.dumps(d['payload'].get('output','')) for d in records if d.get('payload',{}).get('type','').endswith('call_output'))
     assert 'NESTED_BLOCKED' in outputs and 'undefined' in outputs
     assert 'Script running with cell ID' not in outputs
-    reports=[json.loads(p.read_text()) for p in root.glob('agy-subagent-*/report.json')]
+    reports=[json.loads(p.read_text()) for p in root.glob('*/agy-subagent-*/report.json')]
     assert len(reports)==2 and all(r['status']=='completed' for r in reports), reports
     assert {r['mode'] for r in reports}=={'review','edit'}
     assert all(r['model'] in {'claude-sonnet-5-5-high','claude-opus-5-5-high',

@@ -20,6 +20,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 import agy_backend as agy
+from scratch_space import ScratchSpace
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
@@ -61,7 +62,7 @@ async def models() -> str:
 
 
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(openWorldHint=True))
-async def run(task: str, scratch_dir: str, model: str | None = None,
+async def run(task: str, scratch_ref: str, model: str | None = None,
               repo: str | None = None, mode: Literal['review', 'edit'] = 'review') -> dict:
     """Delegate a self-contained review or an authorized edit and wait until finished.
 
@@ -71,7 +72,8 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
     repo adds the real repository for reading or editing; omit it for pure reasoning.
     review exposes read/search tools only. edit also exposes file edits and commands;
     use it only for work already authorized by the user, with a repo.
-    scratch_dir is an existing absolute temporary directory outside repo.
+    scratch_ref is returned by scratch.create; its directory must be outside repo.
+    Use scratch.delete after using the saved logs. Active runs are protected.
     Default model is Claude Opus 5.5 (High); use models to find other model slugs.
     Reviews and edits advance through agy.toml's review_model_order on quota
     or model-unavailable errors, resuming the AGY conversation when one exists.
@@ -80,12 +82,17 @@ async def run(task: str, scratch_dir: str, model: str | None = None,
     Returns the actual model, attempt history, total usage, response and saved logs.
     Verify advice and edits.
     """
+    with ScratchSpace().lease(scratch_ref) as scratch:
+        return await _run(task, scratch, model, repo, mode)
+
+
+async def _run(task: str, scratch: Path, model: str | None,
+               repo: str | None, mode: Literal['review', 'edit']) -> dict:
     if not task.strip():
         raise ValueError('task must be nonempty')
-    scratch = Path(scratch_dir).resolve(strict=True)
     root = Path(repo).resolve(strict=True) if repo else None
     if root and (scratch == root or root in scratch.parents):
-        raise ValueError('scratch_dir must be outside repo')
+        raise ValueError('scratch directory must be outside repo')
     if mode == 'edit' and root is None:
         raise ValueError('edit requires repo')
     out = Path(tempfile.mkdtemp(prefix='agy-subagent-', dir=scratch))

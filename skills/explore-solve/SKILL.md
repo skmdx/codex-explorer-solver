@@ -26,9 +26,10 @@ Give the next decision and pair each missing fact with its source scope in
 Failed requests return a saved `params_file`. Retry with that reference and, when
 needed, `updates` containing only corrected arguments. The tool saves corrections
 and deletes the request after success. No manual file editing is needed.
-After evidence and logs are no longer needed, call `cleanup` directly with no
-arguments. It deletes this MCP session's collection directories and argument files,
-including failed requests. Inspect reported save/deletion errors; active paths are skipped.
+Obtain `scratch_ref` from the Scratch plugin's `create` tool. Pass it to `collect`
+and `remember_navigation`; put params_file inputs inside its returned directory.
+After using the evidence and logs, call Scratch's `delete` with that reference.
+This also removes failed requests. Active consumers are skipped; inspect deletion errors.
 Reuse known findings; reopen settled questions only for a source change, new failure, or counterexample.
 If known Symbols locations can seed the search, pass their results directly to
 `collect.navigation` using [the example](references/agy.md). To reuse navigation

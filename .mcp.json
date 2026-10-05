@@ -4,6 +4,7 @@
       "command": "uv",
       "args": ["run", "--script", "payload/.codex/es/server.py"],
       "cwd": ".",
+      "env_vars": ["CODEX_WORK", "SCRATCH_ROOT", "CODEX_THREAD_ID"],
       "omit_tools_from": ["code_mode"],
       "startup_timeout_sec": 60,
       "tool_timeout_sec": 3600
@@ -12,6 +13,7 @@
       "command": "uv",
       "args": ["run", "--script", "payload/.codex/es/subagents.py"],
       "cwd": ".",
+      "env_vars": ["CODEX_WORK", "SCRATCH_ROOT", "CODEX_THREAD_ID"],
       "omit_tools_from": ["code_mode"],
       "startup_timeout_sec": 60,
       "tool_timeout_sec": 3600

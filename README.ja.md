@@ -74,7 +74,7 @@ AGYの処理中は直接のMCP呼出し内で待ちます。プラグイン設�
 Codex 0.156.1で対応しています。ユーザーの`config.toml`への追加設定は不要です。
 
 プラグイン更新後は新しいセッションで使用します。
-`collect`・`read_evidence`・`cleanup`は直接のMCPツールとして公開され、Code Mode内の`tools`と`ALL_TOOLS`には入りません。
+`collect`・`read_evidence`・`remember_navigation`は直接のMCPツールとして公開され、Code Mode内の`tools`と`ALL_TOOLS`には入りません。
 
 長い引数はUTF-8のJSONオブジェクトとして一時ファイルに保存し、
 `collect`へ`{"params_file":"/absolute/path/request.json"}`だけを渡せます。
@@ -82,24 +82,17 @@ Codex 0.156.1で対応しています。ユーザーの`config.toml`への追加
 ファイル内の`params_file`は不可です。ファイル内のパスの解釈は従来どおりです。
 収集が`validated`で完了すると引数ファイルを自動削除し、失敗時は再試行用に残します。
 自動削除に失敗した場合は、収集結果を保持して`params_delete_error`を返します。
-直接指定で失敗した場合も、引数を`scratch_dir/collect-failed-*.json`へ自動保存し、
+直接指定で失敗した場合も、引数を`scratch_ref`配下の`collect-failed-*.json`へ自動保存し、
 エラー応答または失敗結果の`params_file`で案内します。再試行はその参照と、必要なら
 `updates`に変更する引数だけを渡します。配列を含む値は丸ごと置換され、`null`も指定できます。
 ツールが訂正を保存するため、ファイル編集は不要です。保存先が存在しない・書き込めない場合は元のエラーと
 `params_save_error`を返します。成功時やファイル指定時には再試行用コピーを作りません。
 
-証拠・ログが不要になったら、引数なしの`cleanup`でセッション内の一時データを一括削除できます。
-対象はこのMCPサーバーが作成した収集ディレクトリと、読み込んだ・自動保存した引数ファイルです。
-実行中の対象はスキップし、削除失敗は再試行用に追跡を続けます。結果は`deleted`・`missing`・
-`skipped_active`・`errors`で返します。scratchの親ディレクトリや無関係なファイルは削除しません。
-追跡はMCPサーバーのプロセス内に限定され、別セッションや再起動前の一時データは対象外です。
-したがって`yield_time_ms`の指定は不要です。収集期限は`agy.toml`の既定30分で、呼出し引数からは変更できません。
-他のツールのCode Mode利用には影響しません。
-
-## 実行回数と結果
-
-LSP応答は`remember_navigation(navigation, scratch_dir)`で一度保存し、返されたIDを
-`collect.navigation`へ渡せます。原文がコンテキストに残っている保証とは別で、再読時はhashを検証します。
+Scratchプラグインの`create`が返す英単語IDを`collect`・`remember_navigation`・AGY Subagentsの`scratch_ref`へ渡します。
+引数JSONも返されたディレクトリ内へ保存してください。証拠・ログが不要になったら、
+Scratchの`delete(refs=[...])`で収集結果・navigation・再試行引数をまとめて削除します。
+使用中の参照はロックされ、削除は`skipped_active`となります。他セッションは削除しません。
+共通クライアント`scratch_space.py`はworkspaceの`tools/scratch/sync.py`で同期する生成物です。
 
 - 呼び出し回数と、AGY内部のツール使用回数に上限はありません。通常は1件ずつ実行し、異常終了の記録が残っていても次の調査を実行できます。
 - 収集はSonnetから開始し、利用上限時はGemini Flash（High）へ切り替えます。設定は`agy.toml`、1回だけの指定は`collect.model`を使います。
