@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 import json
 from pathlib import Path
 import signal
+import sqlite3
 import sys
 import tempfile
 import tomllib
@@ -25,10 +26,17 @@ from pydantic import validate_call
 from evidence import evidence_blocks, format_evidence, load_handoff, verify_handoff
 from agy_snapshot import select_paths
 from scratch_space import ScratchSpace
+from word_ids import store_reference
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
 active_paths: Counter[Path] = Counter()
+
+
+def navigation_database():
+    db = sqlite3.connect(ScratchSpace().state / 'navigation.sqlite3')
+    db.execute('CREATE TABLE IF NOT EXISTS refs (id TEXT PRIMARY KEY, payload TEXT NOT NULL UNIQUE)')
+    return db
 
 def save_failed_arguments(arguments: dict[str, Any]) -> dict:
     """Preserve an inline request without hiding its original failure."""
@@ -211,7 +219,11 @@ async def _collect(
     if not question.strip() or not evidence_needed:
         raise ValueError('provide the next question and missing evidence')
     if isinstance(navigation, str):
-        with ScratchSpace().lease_path(navigation) as nav:
+        with closing(navigation_database()) as db:
+            row = db.execute('SELECT payload FROM refs WHERE id=?', (navigation,)).fetchone()
+        if row is None:
+            raise ValueError('unknown navigation ID; call remember_navigation again')
+        with ScratchSpace().lease_path(row[0]) as nav:
             navigation = json.loads(nav.read_text(encoding='utf-8'))
     scope = []
     for item in evidence_needed:
@@ -285,7 +297,9 @@ def remember_navigation(navigation: dict, scratch_ref: str) -> dict:
         raise ValueError('navigation requires absolute root and queries list')
     with ScratchSpace().lease(scratch_ref) as scratch, tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', prefix='navigation-', suffix='.json', dir=scratch, delete=False) as f:
         json.dump(navigation, f, ensure_ascii=False)
-    return {'navigation_id':f.name}
+        with closing(navigation_database()) as db:
+            reference = store_reference(db, 'refs', f.name)
+    return {'navigation_id':reference, 'path':f.name}
 
 
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))

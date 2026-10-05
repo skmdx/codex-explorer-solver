@@ -52,6 +52,8 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_navigation_handle_and_unlimited_collection(self):
         nav = {'root':str(self.repo), 'queries':[]}
         saved = remember_navigation(nav, self.ref)
+        self.assertRegex(saved['navigation_id'], r'^[a-z]+-[a-z]+-[a-z]+$')
+        self.assertTrue(Path(saved['path']).is_file())
         with patch.dict(os.environ, FAKE_CASE='many_tools'):
             result = await self.run_collection(navigation=saved['navigation_id'])
         self.assertEqual(result['status'], 'validated', result)
@@ -60,7 +62,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads((run/'metrics.json').read_text())['observed_tool_calls'], 50)
         self.assertFalse((run.parent/'collection.json').exists())
         self.space.delete()
-        self.assertFalse(Path(saved['navigation_id']).exists())
+        self.assertFalse(Path(saved['path']).exists())
 
     async def test_reader_accepts_hook_external_file_and_encoding_correction(self):
         hook=self.repo/'.git/hooks/pre-commit'
