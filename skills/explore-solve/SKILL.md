@@ -12,8 +12,15 @@ conditions, and test locations. Do not delegate the Solver's final judgment.
 Reuse source already in context. For small questions, use Symbols or targeted reads
 directly. Use AGY for large unread source searches or when explicitly requested.
 Ask it for the missing evidence, not the entire user task. Group requests that share
-source and callers; split only when they need different source areas. There is no
-fixed limit on AGY calls or internal tool steps.
+source and callers; split only when they need different source areas.
+Collection stops locally after 24 observed tool steps by default (override with
+`max_steps`). This includes repairs and model fallback within the call. AGY may
+have already started further work; this is not a hard remote token/spend cap.
+At `step_limit`, inspect existing evidence and unresolved facts before deciding
+whether more collection is needed. `resume(resume_id)` reuses the saved request,
+source snapshot and AGY conversation, with a fresh finite step allowance. Do not
+automatically resume at the limit. Changed source requires a new collection.
+Usage can be unknown when interrupted; never interpret it as zero.
 
 Collection starts with Sonnet and resumes on Gemini Flash High if Sonnet reaches
 a usage limit. The harness handles this fallback within the same deadline.
@@ -31,7 +38,9 @@ arguments. It deletes this MCP session's collection directories and argument fil
 including failed requests. Inspect reported save/deletion errors; active paths are skipped.
 Reuse known findings; reopen settled questions only for a source change, new failure, or counterexample.
 If known Symbols locations can seed the search, pass their results directly to
-`collect.navigation` using [the example](references/agy.md). Include existing
+`collect.navigation` using [the example](references/agy.md). To reuse navigation
+across collections without resending its payload, call `remember_navigation`
+once and pass the returned `navigation_id` as `navigation`. Include existing
 `read_symbols` results so matching originals are not returned again.
 Collection returns an index. Select needed IDs with `read_evidence`; repeat those
 IDs without an offset until `complete` is true. Judge from these originals and

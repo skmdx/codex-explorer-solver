@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT/'payload/.codex/es'))
-from server import collect, read_evidence, cleanup, result_dirs, params_files, active_paths
+from server import collect, read_evidence, cleanup, result_dirs, params_files, active_paths, resume, remember_navigation
 from evidence import EvidenceError
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -44,6 +44,52 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         scope=kw.pop('scope',['src'])
         evidence = kw.pop('evidence_needed', [{'fact':'definition','scope':scope}])
         return await collect(str(self.repo),'Where is f defined?', evidence,str(self.base),**kw)
+
+    async def test_bounded_collection_resume_and_duplicate_resume(self):
+        with patch.dict(os.environ, FAKE_CASE='bounded'):
+            first = await self.run_collection(max_steps=2)
+            self.assertEqual(first['status'], 'step_limit', first)
+            self.assertNotIn('params_file', first)
+            self.assertGreaterEqual(first['observed_tool_calls'], 2)
+            self.assertFalse(first['usage']['usage_complete'])
+            result = await resume(first['resume_id'], max_steps=4)
+        self.assertEqual(result['status'], 'validated', result)
+        self.assertIn('return 1', read_evidence(result['run_dir'], [1])['text'])
+        self.assertEqual((await resume(first['resume_id']))['run_dir'], result['run_dir'])
+        metrics = json.loads((Path(result['run_dir'])/'metrics.json').read_text())
+        self.assertTrue(metrics['conversation_resumed'])
+        self.assertEqual(metrics['source_root'], str(Path(first['run_dir'])/'sources'))
+        cleaned = await cleanup()
+        self.assertFalse(cleaned['errors'])
+        self.assertFalse(Path(first['run_dir']).exists())
+        self.assertFalse(Path(result['run_dir']).exists())
+
+    async def test_resume_rejects_changed_source_before_model(self):
+        with patch.dict(os.environ, FAKE_CASE='bounded'):
+            first = await self.run_collection(max_steps=1)
+        (self.repo/'src/example.py').write_text('def f():\n    return 2\n')
+        result = await resume(first['resume_id'])
+        self.assertNotEqual(result['status'], 'validated', result)
+        self.assertFalse((Path(result['run_dir'])/'events.jsonl').exists())
+
+    async def test_navigation_handle_and_positive_limits(self):
+        nav = {'root':str(self.repo), 'queries':[]}
+        saved = remember_navigation(nav, str(self.base))
+        result = await self.run_collection(navigation=saved['navigation_id'])
+        self.assertEqual(result['status'], 'validated', result)
+        self.assertEqual(json.loads((Path(result['run_dir'])/'navigation.json').read_text()), nav)
+        for value in (0, -1):
+            with self.assertRaises(ValueError):
+                await self.run_collection(max_steps=value)
+
+    async def test_partial_evidence_remains_readable_after_bounded_resume(self):
+        with patch.dict(os.environ, FAKE_CASE='partial'):
+            first = await self.run_collection()
+        with patch.dict(os.environ, FAKE_CASE='bounded_always'):
+            result = await resume(first['resume_id'], max_steps=1)
+        self.assertEqual(result['status'], 'step_limit', result)
+        self.assertEqual(result['unresolved'], first['unresolved'])
+        self.assertIn('return 1', read_evidence(result['run_dir'], [1])['text'])
 
     async def test_reader_accepts_hook_external_file_and_encoding_correction(self):
         hook=self.repo/'.git/hooks/pre-commit'

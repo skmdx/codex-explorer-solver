@@ -96,7 +96,7 @@ def command(executable: str, model: str, agent: str, schema: Path | None, timeou
 
 
 class StreamState:
-    def __init__(self, model: str, agent: str, tools: list[str]):
+    def __init__(self, model: str, agent: str, tools: list[str], max_steps: int | None = None):
         self.model = model; self.agent = agent
         self.allowed_tools = set(tools) | {'ask_permission','manage_task'}
         self.init = None; self.result = None
@@ -105,6 +105,8 @@ class StreamState:
         self.error: str | None = None
         self.finished = False; self.turn_error = False
         self.quota_error: str | None = None
+        self.max_steps = max_steps
+        self.limit_reached = False
 
     def feed(self, raw: bytes) -> None:
         if not raw.strip(): return
@@ -141,6 +143,8 @@ class StreamState:
                     index = step.get('step_index')
                     if type(index) is not int or index < 0: raise EvidenceError('invalid tool step index')
                     self.step_ids.add(index)
+                    if self.max_steps is not None and len(self.step_ids) >= self.max_steps:
+                        self.limit_reached = True
             elif kind == 'result':
                 data = event.get('result')
                 if not isinstance(data, dict): raise EvidenceError('missing terminal result')
@@ -220,6 +224,8 @@ def supervise(argv: list[str], workspace: Path, out: Path, timeout: float | None
                     pump()
                     if state.error:
                         reason = 'protocol_or_capability_error'; stop_process_group(proc); break
+                    if state.limit_reached and state.result is None:
+                        reason = 'step_limit'; stop_process_group(proc); break
                     state.quota_error = quota_log.read()
                     if state.quota_error:
                         reason = 'quota_exhausted'; stop_process_group(proc); break

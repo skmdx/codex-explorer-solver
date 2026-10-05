@@ -2,6 +2,7 @@
 # Model availability is reported by AGY when invoked.
 executable = "agy"
 timeout_seconds = 1800
+collection_max_steps = 24
 explorer_model = "claude-sonnet-5-5-high"
 reader_model = "claude-sonnet-5-5-high"
 review_model_order = ["claude-opus-5-5-high", "gemini-3.1-pro-high", "gemini-3.8-flash-high"]

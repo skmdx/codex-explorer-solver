@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 from collections import Counter
 import json
 from pathlib import Path
@@ -108,6 +109,13 @@ def catalog(run: Path) -> dict:
     result['skipped_models'] = report.get('skipped_models',[])
     result['attempts'] = [{k:a.get(k) for k in ('model','error','elapsed_seconds')} for a in report.get('attempts',[])]
     result['run_dir'] = str(run)
+    result['observed_tool_calls'] = report.get('observed_tool_calls')
+    result['max_steps'] = report.get('max_steps')
+    result['conversation_id'] = report.get('conversation_id')
+    result['usage_scope'] = report.get('usage_scope')
+    result['usage_complete'] = report.get('usage_complete')
+    if report.get('resumable'):
+        result['resume_id'] = str(run)
     evidence = report.get('evidence')
     result['locations'] = []
     if (report.get('scope') or {}).get('unmatched_scopes'):
@@ -128,18 +136,24 @@ def catalog(run: Path) -> dict:
 async def collect(
     repo: str | None = None, question: str | None = None,
     evidence_needed: list[EvidenceRequest] | None = None, scratch_dir: str | None = None,
-    navigation: dict | None = None,
+    navigation: dict | str | None = None,
     known_findings: str | None = None,
     paths: list[str] | None = None, include_untracked: bool | None = None,
     model: str | None = None,
     encodings: dict[str, str] | None = None,
     params_file: str | None = None,
     updates: dict[str, Any] | None = None,
+    max_steps: int | None = None,
 ) -> dict:
     """Collect source evidence through Sonnet, falling back to Gemini Flash High on usage limits, and wait for completion.
 
     Call this tool directly. The host exposes this namespace as direct-only,
     outside code-mode cells. One call waits for completion without a poll handle.
+    max_steps bounds observed tool steps (default 24), including repair/fallback.
+    This is local best-effort stopping, not remote token cancellation. At the
+    limit, resume_id preserves the conversation; call resume only if more evidence
+    is needed. Usage may be unavailable until AGY returns a terminal result.
+    navigation also accepts the ID returned by remember_navigation.
     The collection deadline is set in agy.toml, not selected per tool call.
     question is the next Solver decision. Each evidence_needed item pairs a fact
     (definition, condition, caller or test) with its own scope. The harness unions
@@ -178,7 +192,8 @@ async def collect(
     arguments: dict[str, Any] = dict(repo=repo, question=question, evidence_needed=evidence_needed,
                      scratch_dir=scratch_dir, navigation=navigation,
                      known_findings=known_findings, paths=paths,
-                     include_untracked=include_untracked, model=model, encodings=encodings)
+                     include_untracked=include_untracked, model=model, encodings=encodings,
+                     max_steps=max_steps)
     file = None
     if params_file is not None:
         if any(value is not None for value in arguments.values()):
@@ -206,7 +221,7 @@ async def collect(
     result = None
     try:
         result = await _collect(**arguments)
-        if params_file is None and result['status'] != 'validated':
+        if params_file is None and result['status'] != 'validated' and not result.get('resume_id'):
             result.update(save_failed_arguments(arguments))
         return result
     finally:
@@ -226,9 +241,10 @@ async def collect(
 @validate_call
 async def _collect(
     repo: str, question: str, evidence_needed: list[EvidenceRequest], scratch_dir: str,
-    navigation: dict | None, known_findings: str,
+    navigation: dict | str | None, known_findings: str,
     paths: list[str] | None = None, include_untracked: bool = False,
     model: str | None = None, encodings: dict[str, str] | None = None,
+    max_steps: int | None = None, resume_from: str | None = None,
 ) -> dict:
     root = Path(repo).resolve(strict=True)
     scratch = Path(scratch_dir).resolve(strict=True)
@@ -236,6 +252,10 @@ async def _collect(
         raise ValueError('scratch_dir must be outside repo')
     if not question.strip() or not evidence_needed:
         raise ValueError('provide the next question and missing evidence')
+    if max_steps is not None and (type(max_steps) is not int or max_steps < 1):
+        raise ValueError('max_steps must be a positive integer')
+    if isinstance(navigation, str):
+        navigation = json.loads(Path(navigation).read_text(encoding='utf-8'))
     scope = []
     for item in evidence_needed:
         if not item['fact'].strip():
@@ -251,6 +271,11 @@ async def _collect(
     scope = list(dict.fromkeys(scope))
     work = Path(tempfile.mkdtemp(prefix='explore-solve-', dir=scratch))
     result_dirs.add(work)
+    request = dict(repo=str(root), question=question, evidence_needed=evidence_needed,
+                   scratch_dir=str(scratch), navigation=navigation, known_findings=known_findings,
+                   paths=paths, include_untracked=include_untracked, model=model,
+                   encodings=encodings, max_steps=max_steps)
+    (work/'collection.json').write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
     run = work/'result'
     task = work/'task.txt'
     task.write_text('SOLVER QUESTION (do not solve it):\n'+question
@@ -262,6 +287,10 @@ async def _collect(
     argv = [sys.executable, str(HERE/'locate.py'), '--repo', str(root),
             '--task-file', str(task), '--state-dir', str(work/'state'),
             '--out-dir', str(run), '--timeout', str(CONFIG['timeout_seconds'])]
+    if max_steps is not None:
+        argv.extend(['--max-steps',str(max_steps)])
+    if resume_from is not None:
+        argv.extend(['--resume-from',resume_from])
     for path in scope:
         argv.extend(['--scope',path])
     if paths is not None:
@@ -294,6 +323,71 @@ async def _collect(
     if not (run/'report.json').exists():
         raise RuntimeError(f'Collection failed: {(work/"runner.log").read_text()}')
     return catalog(run)
+
+
+@mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True))
+def remember_navigation(navigation: dict, scratch_dir: str) -> dict:
+    """Store unchanged Symbols responses once, returning a navigation ID for collect.
+
+    Pass {root: absolute LSP workspace, queries: [{tool,args,result/error}]}.
+    Does not mark source as retained in the model's context; original-source
+    reads still validate hashes. cleanup deletes this session's saved navigation.
+    """
+    if not isinstance(navigation.get('root'), str) or not Path(navigation['root']).is_absolute() or not isinstance(navigation.get('queries'), list):
+        raise ValueError('navigation requires absolute root and queries list')
+    scratch = Path(scratch_dir).resolve(strict=True)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', prefix='navigation-', suffix='.json', dir=scratch, delete=False) as f:
+        json.dump(navigation, f, ensure_ascii=False)
+    params_files.add(Path(f.name))
+    return {'navigation_id':f.name}
+
+
+@mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
+async def resume(resume_id: str, max_steps: int | None = None) -> dict:
+    """Continue a bounded or unresolved collection using its saved request and AGY conversation.
+
+    Reuses the immutable source snapshot and verifies current source hashes before
+    invoking AGY. Changed source requires a new collect. max_steps is an additional
+    observed-step allowance, not a token cap. No automatic resume at a limit.
+    Read prior evidence first; do not resume when it already answers the question.
+    """
+    run = Path(resume_id).resolve(strict=True)
+    next_run = run/'continuation.json'
+    if next_run.exists():
+        return catalog(Path(json.loads(next_run.read_text())['run_dir']))
+    if not json.loads((run/'report.json').read_text()).get('resumable'):
+        raise ValueError('collection is not resumable')
+    if active_paths[run]:
+        raise ValueError('collection is already being resumed')
+    arguments = json.loads((run.parent/'collection.json').read_text())
+    if max_steps is not None:
+        arguments['max_steps'] = max_steps
+    result_dirs.add(run.parent)
+    source_work = Path(json.loads((run/'metrics.json').read_text())['source_root']).parent.parent
+    result_dirs.add(source_work)
+    lock = (run/'resume.lock').open('a')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        raise ValueError('collection is already being resumed')
+    if next_run.exists():
+        lock.close()
+        return catalog(Path(json.loads(next_run.read_text())['run_dir']))
+    active_paths[run] += 1
+    active_paths[run.parent] += 1
+    active_paths[source_work] += 1
+    try:
+        result = await _collect(**arguments, resume_from=str(run))
+        if result['status'] in ('validated', 'step_limit'):
+            next_run.write_text(json.dumps({'run_dir':result['run_dir']}))
+        return result
+    finally:
+        lock.close()
+        for path in (run, run.parent, source_work):
+            active_paths[path] -= 1
+            if not active_paths[path]:
+                del active_paths[path]
 
 
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
