@@ -46,8 +46,7 @@ def save_failed_arguments(arguments: dict[str, Any]) -> dict:
                                          prefix='collect-failed-', suffix='.json',
                                          dir=scratch, delete=False) as file:
             file.write(contents)
-        return {'params_file': file.name,
-                'retry': 'Call collect(request={params_file, updates?}). Updates replace whole fields. Scratch deletion removes retained requests and results.'}
+        return {'params_file': file.name}
     except (OSError, ValueError, TypeError, KeyError) as error:
         return {'params_save_error': f'Could not save arguments in scratch_ref: {error}'}
 
@@ -114,25 +113,43 @@ REQUEST = TypeAdapter(RepositoryRequest | FileRequest | RetryRequest)
 
 def catalog(run: Path) -> dict:
     report = json.loads((run/'report.json').read_text())
-    result = {k: report[k] for k in ('status', 'error', 'handoff_status', 'usage')}
+    result = {k: report[k] for k in ('status', 'handoff_status')}
+    if report.get('error'):
+        result['error'] = report['error']
     result['effective_model'] = report.get('effective_model')
-    result['skipped_models'] = report.get('skipped_models',[])
-    result['attempts'] = [{k:a.get(k) for k in ('model','error','elapsed_seconds')} for a in report.get('attempts',[])]
     result['run_dir'] = str(run)
     evidence = report.get('evidence')
-    result['locations'] = []
+    result.update(location_page(evidence, 0, 40))
     if (report.get('scope') or {}).get('unmatched_scopes'):
         result['unmatched_scopes'] = report['scope']['unmatched_scopes']
-    if evidence:
-        for category in ('primary', 'related'):
-            for item in evidence[category]:
-                result['locations'].append(dict(
-                    id=len(result['locations'])+1, role=category,
-                    **{k:item[k] for k in ('path','start','end','symbol','evidence')}))
+    if evidence and evidence['unresolved']:
         result['unresolved'] = evidence['unresolved']
-    if result['locations']:
-        result['next'] = 'Read needed IDs with read_evidence before making Solver judgments.'
     return result
+
+
+def location_page(evidence: dict | None, offset: int, limit: int) -> dict:
+    if offset < 0 or limit < 1:
+        raise ValueError('offset must be nonnegative and limit positive')
+    entries = [(category, item) for category in ('primary', 'related')
+               for item in (evidence or {}).get(category, [])]
+    result: dict = {'locations': [dict(id=index+1, role=category,
+               **{k:item[k] for k in ('path','start','end','symbol','evidence')})
+               for index, (category, item) in enumerate(entries[offset:offset+limit], offset)]}
+    if offset + limit < len(entries):
+        result.update(next_offset=offset+limit, total_locations=len(entries))
+    return result
+
+
+@mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+def list_evidence(run_dir: str, offset: int = 0, limit: int = 40) -> dict:
+    """Continue the collection index using next_offset. IDs stay stable for read_evidence.
+
+    Omitted next_offset means the index is complete. Original sources are read and
+    hash-checked by read_evidence. Full descriptions and diagnostics remain in report.json.
+    """
+    with ScratchSpace().lease_path(run_dir):
+        report = json.loads((Path(run_dir)/'report.json').read_text())
+        return location_page(report.get('evidence'), offset, limit)
 
 
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
@@ -142,6 +159,8 @@ async def collect(request: RepositoryRequest | FileRequest | RetryRequest) -> di
     Use repository sources for scoped code searches, files for explicit inputs,
     or a returned params_file with updates to retry. Calls wait for completion.
     Inline navigation is saved automatically; reuse the returned navigation_id.
+    Read selected IDs with read_evidence. If next_offset is present, list_evidence
+    returns more locations. Usage and attempt details are saved in run_dir/report.json.
     """
     parsed = REQUEST.validate_python(request)
     if isinstance(parsed, RetryRequest):
@@ -265,7 +284,14 @@ async def _collect(
     finally:
         del active_paths[work]
     if not (run/'report.json').exists():
-        raise RuntimeError(f'Collection failed: {(work/"runner.log").read_text()}')
+        log_path = work/'runner.log'
+        with log_path.open('rb') as log:
+            log.seek(0, 2)
+            size = log.tell()
+            log.seek(max(0, size-4000))
+            tail = log.read().decode('utf-8', errors='replace')
+        raise RuntimeError(json.dumps(dict(error='Collection failed before producing report.json',
+            log_path=str(log_path), log_tail=tail, log_truncated=size>4000), ensure_ascii=False))
     result = catalog(run)
     if navigation_id is not None:
         result['navigation_id'] = navigation_id

@@ -65,6 +65,11 @@ Normal fields cannot be mixed with `params_file`; saved requests cannot nest ret
 ## Selected originals
 
 The collection index contains locations and observations, not semantic proof.
+It returns the first 40 locations. When `next_offset` is present, pass it as
+`offset` to `list_evidence(run_dir, offset)`; IDs remain stable across pages.
+No `next_offset` means the index is complete. Unresolved facts are returned with
+the collection even when locations span pages. Usage and attempt history stay
+in `run_dir/report.json`; read them only when needed for diagnosis or accounting.
 Use `read_evidence(run_dir, ids)` for the originals needed to judge the next decision.
 It checks source hashes, combines overlapping lines, and preserves whitespace and
 line endings for patching. Repeating the same IDs continues until `complete` is true.

@@ -12,6 +12,7 @@ plugins: []
 ---
 
 Find the code facts requested by Codex in SOURCE ROOT. Use view_file and grep_search.
-Return the lines that show each fact and a short explanation. Include callers or
+Return the lines that show each fact and one short sentence identifying it; do not
+quote source or repeat the task in the explanation. Include callers or
 tests when the question needs them. If a fact is missing, say what is missing.
 When you have the evidence, call finish. Codex will decide and implement the fix.

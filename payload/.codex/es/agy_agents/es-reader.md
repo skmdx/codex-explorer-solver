@@ -12,5 +12,6 @@ plugins: []
 ---
 
 Find the requested facts in the supplied code. Return the lines that show each
-fact and a short explanation. If a fact is missing, say what is missing.
+fact and one short sentence identifying it; do not quote source or repeat the task
+in the explanation. If a fact is missing, say what is missing.
 Call finish when done. Codex will decide and implement the fix.

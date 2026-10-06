@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT/'payload/.codex/es'))
-from server import collect, read_evidence, active_paths
+from server import collect, read_evidence, list_evidence, catalog, active_paths
 from scratch_space import ScratchSpace
 from evidence import EvidenceError
 from mcp import ClientSession, StdioServerParameters
@@ -218,6 +218,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         nav=[{'tool':'references','result':{'isError':True,'content':[{'type':'text','text':'unsupported'}]}}]
         result=await self.run_collection(navigation=nav,known_findings='The source is src/example.py.')
         self.assertEqual(result['status'],'validated')
+        self.assertFalse({'usage','attempts','skipped_models','next','error','unresolved'} & result.keys())
         self.assertNotIn('source',result['locations'][0])
         run=Path(result['run_dir'])
         request=(run/'request.jsonl').read_text()
@@ -237,6 +238,43 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
             if page['complete']:break
         self.assertEqual(''.join(parts),full['text'])
 
+    async def test_index_pagination_preserves_ids_descriptions_and_unresolved(self):
+        result = await self.run_collection()
+        run = Path(result['run_dir'])
+        handoff = json.loads((run/'handoff.json').read_text())
+        entries = [dict(handoff['primary'][0], evidence=f'fact {i}') for i in range(85)]
+        handoff.update(primary=entries[:50], related=entries[50:], unresolved=['missing caller'])
+        (run/'handoff.json').write_text(json.dumps(handoff))
+        report = json.loads((run/'report.json').read_text())
+        report.update(evidence=handoff, handoff_status='partial')
+        (run/'report.json').write_text(json.dumps(report))
+        first = catalog(run)
+        self.assertEqual(first['handoff_status'], 'partial')
+        self.assertEqual(first['unresolved'], ['missing caller'])
+        self.assertEqual(first['total_locations'], 85)
+        second = list_evidence(str(run), offset=first['next_offset'])
+        last = list_evidence(str(run), offset=second['next_offset'])
+        self.assertNotIn('next_offset', last)
+        locations = first['locations']+second['locations']+last['locations']
+        self.assertEqual([x['id'] for x in locations], list(range(1,86)))
+        self.assertEqual([x['evidence'] for x in locations], [f'fact {i}' for i in range(85)])
+        self.assertEqual(locations[50]['role'], 'related')
+        self.assertIn('return 1', read_evidence(str(run), [85])['text'])
+        self.assertIn('usage', report)
+
+    async def test_missing_report_bounds_runner_log_and_keeps_full_file(self):
+        worker = self.base/'failed_worker.py'
+        worker.write_text("print('x' * 20000 + ' diagnostic end')\n")
+        with patch('server.HERE', self.base):
+            (self.base/'locate.py').symlink_to(worker)
+            with self.assertRaises(RuntimeError) as raised:
+                await self.run_collection()
+        failure = json.loads(str(raised.exception))
+        self.assertTrue(failure['log_truncated'])
+        self.assertLessEqual(len(failure['log_tail'].encode()), 4000)
+        self.assertIn('diagnostic end', failure['log_tail'])
+        self.assertGreater(Path(failure['log_path']).stat().st_size, 20000)
+
     async def test_mcp_transport_returns_index_and_selected_source_once(self):
         (self.repo/'src/nested').mkdir()
         (self.repo/'src/nested/other.py').write_text('other = 1\n')
@@ -255,6 +293,9 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(result.isError)
                 self.assertIsNone(result.structuredContent)
                 index=json.loads(result.content[0].text)
+                listed=await session.call_tool('list_evidence',dict(run_dir=index['run_dir'],limit=1))
+                self.assertFalse(listed.isError,listed)
+                self.assertEqual(json.loads(listed.content[0].text)['locations'][0],index['locations'][0])
                 manifest=json.loads((Path(index['run_dir'])/'source-manifest.json').read_text())
                 self.assertEqual(manifest['scopes'],['src/**/*.py'])
                 self.assertEqual([e['path'] for e in manifest['files']],

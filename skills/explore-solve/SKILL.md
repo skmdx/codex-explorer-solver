@@ -20,7 +20,8 @@ or when collection is explicitly requested. Group facts sharing a source area.
 3. Pass existing Symbols responses as `navigation: [{tool, result}]` when useful.
    Include `read_symbols` responses to reuse matching source already read.
    Navigation is saved automatically; reuse the returned `navigation_id`.
-4. Read needed IDs with `read_evidence`. Repeat the same IDs until `complete`.
+4. If the index has `next_offset`, use `list_evidence(run_dir, offset)` for more
+   locations. Read needed IDs with `read_evidence`. Repeat the same IDs until `complete`.
    Judge from those originals and reuse them. After context loss, set `reread: true`
    on the first call only.
 5. On failure, retry with `request: {params_file, updates}`; updates replace only
