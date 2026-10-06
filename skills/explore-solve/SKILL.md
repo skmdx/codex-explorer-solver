@@ -1,48 +1,31 @@
 ---
 name: explore-solve
-description: Collect missing source evidence when investigation spans unread definitions, callers, conditions, or tests across multiple files; capture large build/test output for focused inspection. Small questions and known source locations can use direct lookup.
+description: Collect missing source evidence across unread definitions, callers, conditions, or tests. Use direct Symbols queries or targeted reads when they can settle the next decision.
 ---
 
-Codex is the Solver: it evaluates guarantees, constructs race scenarios, chooses fixes,
-and implements/tests them. Explorer collects definitions, callers, state changes,
-conditions, and test locations. Do not delegate the Solver's final judgment.
+Codex is the Solver: it judges guarantees, chooses fixes, and implements/tests them.
+Explorer collects the missing source facts; do not delegate the final judgment.
 
-## Choose the investigation
+Reuse source already in context. Use Symbols or a targeted read when a known
+location or relation can settle the next decision. Use `collect` when that decision
+requires searching several unread definitions, callers, conditions, or tests,
+or when collection is explicitly requested. Group facts sharing a source area.
 
-Reuse source already in context. For small questions, use Symbols or targeted reads
-directly. Use AGY for large unread source searches or when explicitly requested.
-Ask it for the missing evidence, not the entire user task. Group requests that share
-source and callers; split only when they need different source areas. There is no
-fixed limit on AGY calls or internal tool steps.
+1. Obtain `scratch_ref` from Scratch's `create`.
+2. Call `collect` directly with `request: {repo, scratch_ref, question,
+   evidence_needed: [{fact, scope}]}`. Add settled conclusions as `known_findings`.
+   Repository scopes select tracked files; `include_untracked` adds nonignored files.
+   For explicit files, including ignored or external files, use `source: "files"`
+   and put their paths in each fact's scope. See [request examples](references/agy.md).
+3. Pass existing Symbols responses as `navigation: [{tool, result}]` when useful.
+   Include `read_symbols` responses to reuse matching source already read.
+   Navigation is saved automatically; reuse the returned `navigation_id`.
+4. Read needed IDs with `read_evidence`. Repeat the same IDs until `complete`.
+   Judge from those originals and reuse them. After context loss, set `reread: true`
+   on the first call only.
+5. On failure, retry with `request: {params_file, updates}`; updates replace only
+   specified fields. After using the evidence, delete the Scratch reference.
 
-Collection starts with Sonnet and resumes on Gemini Flash High if Sonnet reaches
-a usage limit. The harness handles this fallback within the same deadline.
-
-For AGY, call the plugin's `collect` MCP tool directly. The host exposes this
-namespace outside code-mode cells, so collection returns only on completion,
-failure, or cancellation. The collection deadline comes from `agy.toml`.
-Give the next decision and pair each missing fact with its source scope in
-`evidence_needed: [{fact, scope}]`. The harness validates and unions these scopes.
-Failed requests return a saved `params_file`. Retry with that reference and, when
-needed, `updates` containing only corrected arguments. The tool saves corrections
-and deletes the request after success. No manual file editing is needed.
-Obtain `scratch_ref` from the Scratch plugin's `create` tool. Pass it to `collect`
-and `remember_navigation`; put params_file inputs inside its returned directory.
-After using the evidence and logs, call Scratch's `delete` with that reference.
-This also removes failed requests. Active consumers are skipped; inspect deletion errors.
-Reuse known findings; reopen settled questions only for a source change, new failure, or counterexample.
-If known Symbols locations can seed the search, pass their results directly to
-`collect.navigation` using [the example](references/agy.md). To reuse navigation
-across collections without resending its payload, call `remember_navigation`
-once and pass the returned `navigation_id` as `navigation`. Include existing
-`read_symbols` results so matching originals are not returned again.
-Collection returns an index. Select needed IDs with `read_evidence`; repeat those
-IDs without an offset until `complete` is true. Judge from these originals and
-reuse them, reading further only for missing or changed source.
-
-Resolve ES to the absolute path of `../../payload/.codex/es` relative to this SKILL.md's
-directory. This is the installed plugin's tools directory, not the target repository.
-For tests/builds with large output, use
-`python3 ES/capture.py --repo REPO --out-dir TEST_RUN -- COMMAND ARGS`, replacing ES with that path.
-Use a new output directory outside the target repository and inspect the saved logs
-only where the returned exit status and tails do not settle the result.
+The direct MCP call waits for completion; there is no polling handle. Sonnet
+falls back to Gemini Flash High on usage limits within the `agy.toml` deadline.
+For builds and tests, use the Blocking Shell plugin's execution and log facilities.

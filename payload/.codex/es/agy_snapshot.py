@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import subprocess
+from fnmatch import fnmatchcase
+from functools import lru_cache
 from typing import Any
 from evidence import EvidenceError, compact_json, source_bytes, source_path, load_handoff
 
@@ -34,26 +36,32 @@ def git_paths(root: Path, include_untracked: bool = False) -> list[str]:
 
 def select_paths(root: Path, scopes: list[str], include_untracked: bool = False) -> tuple[list[str], list[str]]:
     scopes = [safe_relative(scope) for scope in scopes]
+    candidates = git_paths(root, include_untracked)
     unmatched_scopes = []
     if scopes:
         selected = set()
         for scope in scopes:
             if scope == '.':
-                selected.update(git_paths(root, include_untracked))
+                selected.update(candidates)
                 continue
-            matches = [root/scope] if (root/scope).exists() else root.glob(scope)
-            files = set()
-            for match in matches:
-                for path in match.rglob('*') if match.is_dir() else [match]:
-                    if path.is_file():
-                        files.add(path.relative_to(root).as_posix())
+            files = {name for name in candidates if matches_scope(name, scope)}
             if not files:
                 unmatched_scopes.append(scope)
             selected.update(files)
         candidates = sorted(selected)
-    else:
-        candidates = git_paths(root, include_untracked)
     return candidates, unmatched_scopes
+
+
+def matches_scope(name: str, scope: str) -> bool:
+    parts, pattern = name.split('/'), scope.split('/')
+    @lru_cache(None)
+    def match(i: int, j: int) -> bool:
+        if j == len(pattern):
+            return True  # A selected directory includes its descendants.
+        if pattern[j] == '**':
+            return match(i, j+1) or (i < len(parts) and match(i+1, j))
+        return i < len(parts) and fnmatchcase(parts[i], pattern[j]) and match(i+1, j+1)
+    return match(0, 0)
 
 
 def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
@@ -65,7 +73,6 @@ def export(root: Path, workspace: Path, *, mode: str, paths: list[str],
         candidates, unmatched_scopes = list(dict.fromkeys(paths)), []
     else:
         candidates, unmatched_scopes = select_paths(root, scopes, include_untracked)
-        include_untracked = include_untracked or any(scope != '.' for scope in scopes)
     entries = []; skipped = []; total = 0
     # The private output directory is created by the runner; workspace is new.
     workspace.mkdir(mode=0o700, exist_ok=False)

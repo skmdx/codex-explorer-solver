@@ -209,13 +209,16 @@ class SnapshotTests(Fixture):
     def test_scope_glob_no_matches(self):
         with self.assertRaisesRegex(EvidenceError,'no eligible source files'):
             self.export(scopes=['missing/**/*.py'])
-    def test_explicit_scope_includes_ignored_and_untracked(self):
+    def test_explicit_scope_respects_untracked_flag_and_gitignore(self):
         (self.repo/'src/new.py').write_text('new\n')
         (self.repo/'src/ignored.py').write_text('ignored\n')
         (self.repo/'.gitignore').write_text('src/ignored.py\n')
         m=self.export(scopes=['src/**/*.py'])
-        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py','src/new.py','src/ignored.py'})
-    def test_explicit_scope_crosses_ignored_nested_repository(self):
+        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py'})
+        m=snap.export(self.repo,self.base/'with-untracked',mode='localize',paths=[],
+                      scopes=['src/**/*.py'],include_untracked=True,encodings={})
+        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py','src/new.py'})
+    def test_explicit_scope_excludes_ignored_nested_repository(self):
         nested=self.repo/'.codex'
         nested.mkdir()
         subprocess.run(['git','init','-q',str(nested)],check=True)
@@ -224,9 +227,9 @@ class SnapshotTests(Fixture):
         (audit/'check.py').write_text('assert output == expected\n')
         subprocess.run(['git','-C',str(nested),'add','audit'],check=True)
         m=self.export(scopes=['src/*.py','.codex/audit/*','missing/*.c'])
-        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py','.codex/audit/check.py'})
-        self.assertEqual(m['unmatched_scopes'],['missing/*.c'])
-        self.assertTrue(m['includes_untracked'])
+        self.assertEqual({e['path'] for e in m['files']},{'src/example.py','src/other.py'})
+        self.assertEqual(m['unmatched_scopes'],['.codex/audit/*','missing/*.c'])
+        self.assertFalse(m['includes_untracked'])
         snap.verify_export(self.repo,self.base/'workspace',m)
     def test_invalid_scope_refused(self):
         with self.assertRaises(EvidenceError):self.export(scopes=['../secret'])

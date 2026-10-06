@@ -41,7 +41,7 @@ First use functions.exec with yield_time_ms 1. Print typeof tools.mcp__explore_s
 and whether ALL_TOOLS contains it. Then actually attempt to call that nested function with
 empty arguments, catch the TypeError, and print NESTED_BLOCKED. Do not invoke a shell fallback.
 Call scratch.create once to obtain a temporary directory reference.
-Next call the direct explore-solve collect MCP tool once with repo={str(repo)!r},
+Next call the direct explore-solve collect MCP tool once with a request object containing repo={str(repo)!r},
 scratch_ref=the ID returned by scratch.create, navigation=null, known_findings="",
 question="How does dispatch normalize its input?",
 evidence_needed=[{{"fact":"dispatch definition and the normalize function it calls","scope":["example.py"]}}].

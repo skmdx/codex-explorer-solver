@@ -1,112 +1,78 @@
-# AGY collection
+# Collection requests
 
-Use `collect` for source facts missing from the next Solver decision. State the
-question and the needed conditions, updates or callers separately; do not ask it
-to solve an entire issue or find design flaws. Group facts sharing a source path.
-Existing conclusions belong in `known_findings`, not in another broad investigation.
+Call `collect` directly, outside Code Mode. The tool waits for completion.
+The input has one required `request`, which takes one of three forms.
 
-Call `collect` directly. The plugin excludes its MCP tools from Code Mode;
-there is no outer cell or polling handle for this call.
-The collection deadline is configured in `agy.toml`, not passed by the Solver.
-
-Large requests can be saved as a UTF-8 JSON object containing the same arguments
-shown below. Call `collect` with only `{"params_file":"/absolute/path/request.json"}`
-and reuse that file on retry. The file path must be absolute; paths inside the
-object keep their usual meaning, not a base relative to the JSON file. Non-null
-inline arguments cannot be mixed with `params_file`, and the file cannot itself
-contain `params_file`. Missing required fields and invalid types are rejected
-before collection starts. Keep the file in a directory returned by Scratch's `create`.
-A validated collection
-automatically deletes its argument file; failures keep it available for retry.
-
-Inline call failures, including MCP argument validation errors, save the arguments
-as `collect-failed-*.json` under `scratch_ref`. The error response or failed collection
-index includes `params_file`. Retry with that reference and optional `updates`
-containing only corrected top-level arguments. Whole values (including lists)
-are replaced; null is supported. The tool saves corrections before retrying.
-Successful calls and calls already using `params_file` do not create retry copies.
-If `scratch_ref` is invalid or its directory is unwritable, the original error remains and
-`params_save_error` describes the save failure. Automatic deletion failures are
-reported as `params_delete_error` without changing a validated collection's status.
-
-Use `scratch_ref` from Scratch's `create`. Call Scratch's `delete(refs=[...])`
-after using the evidence and logs. It removes the directory with its collection
-outputs, navigation and retry arguments. Active consumers are skipped; failed
-deletions remain retryable. Other sessions and unrelated files are untouched.
-
-## Pass known symbol locations
-
-Use existing Symbols results where available. Otherwise request only the relations
-needed: `inspect` for definitions, `references` for uses, `call_hierarchy` for calls.
-Use `outline` or `search` first only when the position is unknown. If LSP answers the
-question directly, finish without AGY. Match the actual tool names exposed by the host.
-
-Replace the example paths, position and question. `navigation.root` is the Symbols
-profile's workspacePath; it may be above the repository. Positions are 1-based.
-
-Example direct `collect` arguments after a Symbols query:
+## Repository search
 
 ```json
 {
-  "repo": "/absolute/repo",
-  "scratch_ref": "fern-moon-lake",
-  "question": "Which condition prevents adoption of an old completion?",
-  "evidence_needed": [{"fact": "The adoption condition and writes to the version it checks", "scope": ["src"]}],
-  "navigation": {
-    "root": "/absolute/workspace",
-    "queries": [{
-      "tool": "references",
-      "args": {"file": "/absolute/repo/src/file.c", "line": 120, "character": 5},
-      "result": {
-        "content": [{"type": "text", "text": "Showing 1-1 of 1.\nFound 1 reference(s) across 1 file\n\nsrc/file.c (1 references)\n  @160:5 symbol"}],
-        "structuredContent": {
-          "locations": [{"path": "/absolute/repo/src/file.c", "range": {
-            "start": {"line": 160, "character": 5}, "end": {"line": 160, "character": 10}
-          }}],
-          "page": {"offset": 0, "limit": 100, "total": 1, "nextOffset": null}
-        }
-      }
-    }]
-  },
-  "known_findings": "The completion carries a saved version."
+  "request": {
+    "repo": "/absolute/repo",
+    "scratch_ref": "fern-moon-lake",
+    "question": "Which condition prevents adoption of an old completion?",
+    "evidence_needed": [
+      {"fact": "Adoption condition and writes to the version it checks", "scope": ["src"]},
+      {"fact": "Regression coverage for stale completions", "scope": ["tests/**/*.py"]}
+    ],
+    "known_findings": "The completion carries a saved version."
+  }
 }
 ```
 
-Pass the actual MCP response as `result`, without rebuilding this example by hand.
-The host sends only `structuredContent` to the Explorer, remapping location paths while
-keeping names, page metadata and errors unchanged. Text-only results need the
-updated Symbols server. Include existing `read_symbols` results in `queries`:
-their full-line receipts avoid returning the same version of source again.
-Do not repeat an LSP
-query just to fill `navigation`. Errors remain unavailable results, not empty reference lists.
-Each evidence item's `scope` covers that fact's source area; LSP hits are starting points, not an
-exhaustive export filter. Without a useful symbol seed, pass `navigation: null`.
-The harness checks every item's scope before model startup and exports their union.
-Scopes are repository-relative files, directories, or globs: `src/*.c` selects direct
-children; `src/**/*.c` also includes nested files. Multiple patterns are combined.
-Explicit scopes include ignored/untracked files and nested repositories. With
-`scope: []` or `["."]`, Git's tracked list is used; `include_untracked` adds
-non-ignored untracked files. Unmatched patterns fail before model startup and identify the affected fact.
-Use an empty `known_findings` only for a new investigation.
+`source` defaults to `repository`. Each scope selects repository-relative files,
+directories, or globs from Git's tracked list. `*`, `?`, and `[abc]` stay within a
+path component; `**` spans directories. `[]` or `["."]` selects the whole list.
+`include_untracked: true` adds nonignored untracked files for every scope.
+The tool checks each fact's scope before starting the model and exports their union.
+Unmatched patterns identify the affected fact; nested repositories are separate inputs.
 
-## Read only needed originals
+Optional `navigation` is an array of `{tool, result}` pairs. Copy the actual Symbols
+MCP response into `result`, including `structuredContent`, without reconstructing it.
+Current Symbols responses carry absolute locations; no workspace wrapper is needed.
+Include existing `read_symbols` responses to reuse matching full-line read receipts.
+The tool saves navigation automatically and returns `navigation_id`; pass that string
+as `navigation` for later collections. Omit navigation when no useful seed exists.
+Do not repeat a Symbols query just to populate it. Failed responses remain errors.
 
-`collect` returns `run_dir`, indexed locations, short observations and unresolved
-questions. These observations are leads, not verified semantic conclusions.
-Call `read_evidence(run_dir, ids)` for the locations needed now. It checks source
-hashes and combines overlapping lines. Bodies preserve indentation, line endings
-and the final newline; range labels stay outside each contiguous body so it can
-be used as `apply_patch` context. For large selections, repeat the same IDs
-without an offset: each call returns the next page until `complete` is true.
-`next_offset` reports where that next page starts.
-Completed ranges are reused across different ID selections and from matching
-Symbols receipts. Observations stay in the collection index; reads return only source blocks. In-progress pages retain
-stable offsets; their ranges count as read only after the full selection is delivered.
-Explicit `offset: 0` rereads after
-context loss. `max_chars` is the response page size, not an
-evidence limit. Keep using returned originals instead of rereading them with sed.
+## Explicit files
 
-All originals and usage remain in `run_dir/report.json`; `report.txt` is a full
-diagnostic artifact, not the default context input. A failed collection returns
-its error and artifact path. Do not rerun successful collection because usage
-accounting failed. Keep useful artifacts, then remove the task's temporary run.
+Use `source: "files"` with the same required fields, but put explicit file paths
+in every fact's `scope`. These may be repository-relative or absolute, including
+ignored files, Git hooks, and external files. Empty scopes and globs are not accepted.
+This mode sends the files for reading and has no `navigation` or `include_untracked`.
+
+Both source modes accept `model` for a single-call override and `encodings` as a
+path-to-codec mapping when automatic encoding detection needs correction.
+
+## Saved requests and retries
+
+For large input, save the inner request object as UTF-8 JSON inside the directory
+returned by Scratch's `create`. Call:
+
+```json
+{"request": {"params_file": "/absolute/scratch/request.json"}}
+```
+
+Inline failures also save the request under `scratch_ref` and return `params_file`.
+Retry with that path and optional `updates`, containing only changed request fields.
+Values, including lists, are replaced whole; paths keep their original meaning.
+The tool saves corrections and deletes the file after a validated collection.
+Failures preserve it. Invalid scratch references return `params_save_error`;
+cleanup failures return `params_delete_error` without discarding a validated result.
+Normal fields cannot be mixed with `params_file`; saved requests cannot nest retries.
+
+## Selected originals
+
+The collection index contains locations and observations, not semantic proof.
+Use `read_evidence(run_dir, ids)` for the originals needed to judge the next decision.
+It checks source hashes, combines overlapping lines, and preserves whitespace and
+line endings for patching. Repeating the same IDs continues until `complete` is true.
+`max_chars` controls page size. Completed ranges are reused across ID selections
+and matching Symbols receipts; incomplete pages remain available.
+To reread after context loss, set `reread: true` on the first call, then continue normally.
+
+Full evidence and usage remain in `run_dir`. Use saved diagnostic files only when the
+index and selected originals leave a question unanswered. Once they are no longer
+needed, call Scratch's `delete(refs=[...])`; it removes evidence, navigation and retry
+files together. Active consumers are skipped; inspect deletion errors.

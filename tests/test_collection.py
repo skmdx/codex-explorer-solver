@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT/'payload/.codex/es'))
-from server import collect, read_evidence, active_paths, remember_navigation
+from server import collect, read_evidence, active_paths
 from scratch_space import ScratchSpace
 from evidence import EvidenceError
 from mcp import ClientSession, StdioServerParameters
@@ -43,17 +43,18 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.env.stop();self.temp.cleanup()
 
     async def run_collection(self, **kw):
-        kw.setdefault('navigation',None)
+
         kw.setdefault('known_findings','')
         scope=kw.pop('scope',['src'])
         evidence = kw.pop('evidence_needed', [{'fact':'definition','scope':scope}])
-        return await collect(str(self.repo),'Where is f defined?', evidence,self.ref,**kw)
+        return await collect(dict(repo=str(self.repo),question='Where is f defined?', evidence_needed=evidence,scratch_ref=self.ref,**kw))
 
     async def test_navigation_handle_and_unlimited_collection(self):
         nav = {'root':str(self.repo), 'queries':[]}
-        saved = remember_navigation(nav, self.ref)
+        saved = await self.run_collection(navigation=[])
         self.assertRegex(saved['navigation_id'], r'^[a-z]+-[a-z]+-[a-z]+$')
-        self.assertTrue(Path(saved['path']).is_file())
+        saved_files = list(self.base.glob('navigation-*.json'))
+        self.assertEqual(len(saved_files), 1)
         with patch.dict(os.environ, FAKE_CASE='many_tools'):
             result = await self.run_collection(navigation=saved['navigation_id'])
         self.assertEqual(result['status'], 'validated', result)
@@ -62,13 +63,13 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads((run/'metrics.json').read_text())['observed_tool_calls'], 50)
         self.assertFalse((run.parent/'collection.json').exists())
         self.space.delete()
-        self.assertFalse(Path(saved['path']).exists())
+        self.assertFalse(saved_files[0].exists())
 
     async def test_reader_accepts_hook_external_file_and_encoding_correction(self):
         hook=self.repo/'.git/hooks/pre-commit'
         hook.write_bytes('# 日本語\nexit 0\n'.encode('cp932'))
         external=self.base/'external.txt';external.write_text('external source\n')
-        result=await self.run_collection(scope=[],paths=['src/example.py','.git/hooks/pre-commit',str(external)],
+        result=await self.run_collection(source='files',scope=['src/example.py','.git/hooks/pre-commit',str(external)],
                                          encodings={'.git/hooks/pre-commit':'cp932'})
         self.assertEqual(result['status'],'validated',result)
         run=Path(result['run_dir'])
@@ -79,12 +80,22 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('external source',(run/'request.jsonl').read_text())
         self.assertIn('return 1',read_evidence(str(run),[1])['text'])
 
+    async def test_source_modes_reject_ambiguous_inputs_before_collection(self):
+        for options in ({'source':'files','navigation':[]},
+                        {'source':'files','include_untracked':True},
+                        {'source':'files','scope':[]},
+                        {'source':'files','scope':['src/*.py']},
+                        {'paths':['src/example.py']}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                await self.run_collection(**options)
+        self.assertFalse(list(self.base.glob('explore-solve-*')))
+
     async def test_params_file_over_stdio_and_retry(self):
         request = self.base/'request.json'
         arguments = dict(repo=str(self.repo), scratch_ref=self.ref,
-                         question='Where is f?', evidence_needed=[{'fact':'definition','scope':[]}],
-                         navigation=None, known_findings='既知の情報',
-                         paths=['src/example.py'], model='gemini-custom-model',
+                         question='Where is f?', evidence_needed=[{'fact':'definition','scope':['src/example.py']}],
+                         source='files', known_findings='既知の情報',
+                         model='gemini-custom-model',
                          encodings={'src/example.py':'utf-8'})
         request.write_text(json.dumps(arguments, ensure_ascii=False), encoding='utf-8')
         params = StdioServerParameters(command=sys.executable,
@@ -95,13 +106,13 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 schema = next(t.inputSchema for t in (await session.list_tools()).tools if t.name=='collect')
                 self.assertNotIn('max_steps', schema['properties'])
                 self.assertNotIn('resume', {t.name for t in (await session.list_tools()).tools})
-                self.assertIn('params_file', schema['properties'])
-                self.assertFalse(schema.get('required'))
-                failed = await session.call_tool('collect', {'params_file':str(request), 'question':'mixed'})
+                self.assertEqual(schema['required'], ['request'])
+                self.assertNotIn('remember_navigation', {t.name for t in (await session.list_tools()).tools})
+                failed = await session.call_tool('collect', {'request':{'params_file':str(request), 'question':'mixed'}})
                 self.assertTrue(failed.isError)
                 for _ in range(2):
                     request.write_text(json.dumps(arguments), encoding='utf-8')
-                    result = await session.call_tool('collect', {'params_file':str(request)})
+                    result = await session.call_tool('collect', {'request':{'params_file':str(request)}})
                     self.assertFalse(result.isError, result)
                     self.assertFalse(request.exists())
                     index = json.loads(result.content[0].text)
@@ -124,11 +135,11 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                          json.dumps(dict(valid, include_untracked='invalid'))):
             request.write_text(contents)
             with self.subTest(contents=contents), self.assertRaises(ValueError):
-                await collect(params_file=str(request))
+                await collect({'params_file':str(request)})
         with self.assertRaisesRegex(ValueError, 'absolute'):
-            await collect(params_file='relative.json')
+            await collect({'params_file':'relative.json'})
         with self.assertRaises(FileNotFoundError):
-            await collect(params_file=str(self.base/'missing.json'))
+            await collect({'params_file':str(self.base/'missing.json')})
         self.assertEqual(list(self.base.glob('explore-solve-*')), [])
 
     async def test_inline_mcp_errors_save_original_arguments_for_retry(self):
@@ -142,29 +153,29 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 await session.initialize()
                 for scope in (42, ['missing.py']):
                     arguments['evidence_needed'][0]['scope'] = scope
-                    result = await session.call_tool('collect', arguments)
+                    result = await session.call_tool('collect', {'request':arguments})
                     self.assertTrue(result.isError)
                     message = result.content[0].text
                     saved = json.loads(message.splitlines()[-1])
                     file = Path(saved['params_file'])
                     self.assertEqual(json.loads(file.read_text()), arguments)
                     self.assertEqual(file.stat().st_mode & 0o777, 0o600)
-                    retry = await session.call_tool('collect', {'params_file':str(file)})
+                    retry = await session.call_tool('collect', {'request':{'params_file':str(file)}})
                     self.assertTrue(retry.isError)
                     self.assertTrue(file.exists())
                     self.assertNotIn('collect-failed-', retry.content[0].text)
-                    failed_update = await session.call_tool('collect', {'params_file':str(file),
-                        'updates': {'evidence_needed':[{'fact':'definition','scope':['still-missing.py']}]}})
+                    failed_update = await session.call_tool('collect', {'request':{'params_file':str(file),
+                        'updates': {'evidence_needed':[{'fact':'definition','scope':['still-missing.py']}]}}})
                     self.assertTrue(failed_update.isError)
                     self.assertEqual(json.loads(file.read_text())['evidence_needed'][0]['scope'], ['still-missing.py'])
-                    retry = await session.call_tool('collect', {'params_file':str(file),
-                        'updates': {'evidence_needed':[{'fact':'definition','scope':['src']}]}})
+                    retry = await session.call_tool('collect', {'request':{'params_file':str(file),
+                        'updates': {'evidence_needed':[{'fact':'definition','scope':['src']}]}}})
                     self.assertFalse(retry.isError, retry)
                     self.assertEqual(json.loads(retry.content[0].text)['status'], 'validated')
                     self.assertFalse(file.exists())
                 self.assertEqual(len(list(self.base.glob('collect-failed-*.json'))), 0)
                 arguments['scratch_ref'] = str(self.base/'missing')
-                result = await session.call_tool('collect', arguments)
+                result = await session.call_tool('collect', {'request':arguments})
                 self.assertTrue(result.isError)
                 self.assertIn('params_save_error', result.content[0].text)
                 self.assertIn('unknown scratch reference', result.content[0].text)
@@ -194,7 +205,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_fact_scopes_are_unioned_including_untracked_tests(self):
         (self.repo/'tests').mkdir()
         (self.repo/'tests/test_example.py').write_text('assert 1 == 1\n')
-        result=await self.run_collection(evidence_needed=[
+        result=await self.run_collection(include_untracked=True,evidence_needed=[
             {'fact':'definition','scope':[]},
             {'fact':'regression tests','scope':['tests']}])
         run=Path(result['run_dir'])
@@ -204,7 +215,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('regression tests [scope: tests]',request)
 
     async def test_waits_and_returns_index_then_originals(self):
-        nav={'root':str(self.base),'queries':[{'tool':'references','error':'unsupported'}]}
+        nav=[{'tool':'references','result':{'isError':True,'content':[{'type':'text','text':'unsupported'}]}}]
         result=await self.run_collection(navigation=nav,known_findings='The source is src/example.py.')
         self.assertEqual(result['status'],'validated')
         self.assertNotIn('source',result['locations'][0])
@@ -219,12 +230,11 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         full=read_evidence(str(run),[1])
         self.assertIn('    return 1',full['text'])
         self.assertEqual(read_evidence(str(run),[1])['text'],'')
-        parts=[];offset=0
+        parts=[]
         while True:
-            page=read_evidence(str(run),[1],offset=offset,max_chars=17)
+            page=read_evidence(str(run),[1],reread=not parts,max_chars=17)
             parts.append(page['text'])
-            if page['next_offset'] is None:break
-            offset=page['next_offset']
+            if page['complete']:break
         self.assertEqual(''.join(parts),full['text'])
 
     async def test_mcp_transport_returns_index_and_selected_source_once(self):
@@ -239,9 +249,9 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 await session.initialize()
                 schema=next(t.inputSchema for t in (await session.list_tools()).tools if t.name=='collect')
                 self.assertNotIn('timeout',schema['properties'])
-                result=await session.call_tool('collect',dict(repo=str(self.repo),
+                result=await session.call_tool('collect',{'request':dict(repo=str(self.repo),
                     question='Where is f?',evidence_needed=[{'fact':'definition','scope':['src/**/*.py']}],scratch_ref=self.ref,
-                    navigation=None,known_findings=''))
+                    navigation=None,known_findings='')})
                 self.assertFalse(result.isError)
                 self.assertIsNone(result.structuredContent)
                 index=json.loads(result.content[0].text)
@@ -289,7 +299,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         request.write_text(json.dumps(dict(repo=str(self.repo), scratch_ref=self.ref,
             question='Where?', evidence_needed=[{'fact':'definition','scope':['src']}],
             navigation=None, known_findings='')))
-        task=asyncio.create_task(collect(params_file=str(request)))
+        task=asyncio.create_task(collect({'params_file':str(request)}))
         try:
             async def started():
                 while not pid_file.exists(): await asyncio.sleep(0.01)
@@ -313,11 +323,11 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
             navigation=None, known_findings='')))
         os.environ['FAKE_CASE']='timeout'
         with patch.dict('server.CONFIG',timeout_seconds=0.2):
-            failed=await collect(params_file=str(request))
+            failed=await collect({'params_file':str(request)})
         self.assertNotEqual(failed['status'], 'validated')
         self.assertTrue(request.exists())
         os.environ['FAKE_CASE']='ok'
-        result=await collect(params_file=str(request))
+        result=await collect({'params_file':str(request)})
         self.assertEqual(result['status'], 'validated')
         self.assertFalse(request.exists())
 
@@ -327,7 +337,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
             question='Where?', evidence_needed=[{'fact':'definition','scope':['src']}],
             navigation=None, known_findings='')))
         with patch.object(Path, 'unlink', side_effect=PermissionError('denied')):
-            result = await collect(params_file=str(request))
+            result = await collect({'params_file':str(request)})
         self.assertEqual(result['status'], 'validated')
         self.assertEqual(result['params_delete_error'], 'denied')
         self.assertTrue(request.exists())
@@ -341,7 +351,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         (run/'handoff.json').write_text(json.dumps(handoff))
         first=read_evidence(str(run),[2,1],max_chars=20)
         rest=read_evidence(str(run),[1,2])
-        full=read_evidence(str(run),[1,2],offset=0)
+        full=read_evidence(str(run),[1,2],reread=True)
         self.assertEqual(first['text']+rest['text'],full['text'])
 
     async def test_read_rechecks_source(self):
@@ -355,14 +365,14 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         file.write_bytes(raw)
         receipt = {'path':str(file), 'contentSha256':hashlib.sha256(raw).hexdigest(),
                    'range':{'start':{'line':1,'character':1},'end':{'line':2,'character':1}}}
-        nav = {'root':str(self.base),'queries':[{'tool':'read_symbols', 'result':{
+        nav = [{'tool':'read_symbols', 'result':{
             'content':[{'type':'text','text':raw.decode()}],
-            'structuredContent':{'readSources':[receipt]}}}]}
+            'structuredContent':{'readSources':[receipt]}}}]
         result = await self.run_collection(navigation=nav)
         page = read_evidence(result['run_dir'],[1])
         self.assertNotIn('def f():',page['text'])
         self.assertIn('    return "日本語😀"',page['text'])
-        replay = read_evidence(result['run_dir'],[1],offset=0)
+        replay = read_evidence(result['run_dir'],[1],reread=True)
         self.assertIn(raw.decode(),replay['text'])
         receipt['contentSha256'] = '0'*64
         result = await self.run_collection(navigation=nav)

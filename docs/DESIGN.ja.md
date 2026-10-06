@@ -11,7 +11,7 @@
 `max_chars`はページサイズで、全原文は保存済みです。同じ選択の読取り位置を実行先へ保存し、
 省略時は続きから、明示した`offset`があればその位置から返します。重なる引用行はまとめます。
 読み終えた範囲を`read_state.json`へ保存し、異なるID選択にも再利用します。ページ途中の選択は
-本文と位置を固定し、全体を返してから取得済みにします。`offset: 0`は取得済み範囲も再表示します。
+本文と位置を固定し、全体を返してから取得済みにします。`reread: true`は取得済み範囲も再表示します。
 MCP呼出しの取消時はrunnerへSIGINTを送り、AGYの子プロセスを停止して終了を待ちます。
 
 ## 切り詰め時の案内
@@ -26,23 +26,23 @@ hookへ渡った結果を対象にするため、その後の外側のコード�
 
 ## 収集の指定
 
-`collect`にはリポジトリの絶対パス、次の判断、不足する根拠、既知の結論、LSP結果を渡します。
-`scratch_dir`は対象リポジトリ外の既存の一時ディレクトリです。
+`collect.request`にはリポジトリの絶対パス、次の判断、不足する根拠、既知の結論、LSP結果を渡します。
+`scratch_ref`はScratchプラグインが作成した、対象リポジトリ外の一時ディレクトリを指します。
 サーバーがその下に実行ごとの作業先を作り、収集結果の`run_dir`を返します。
 プロセス制御はLinux・macOS・WSLを対象にしています。
 
-| 調査方法 | `collect`の引数 |
+| 調査方法 | `collect.request`のフィールド |
 |---|---|
 | 実装とテストを調べる | `evidence_needed: [{fact: "条件分岐", scope: ["src"]}, {fact: "回帰テスト", scope: ["tests"]}]` |
 | globでファイルを選ぶ | 各項目の `scope: ["src/**/*.c", "tests/test_?.py"]` |
-| 指定ファイルの全文を読ませる（Reader） | `paths: [".git/hooks/pre-commit"]`。各項目の `scope: []`, `navigation: null`を指定 |
+| 指定ファイルの全文を読ませる（Reader） | `source: "files"`と各項目の`scope: [".git/hooks/pre-commit"]` |
 | scopeを絞らず未追跡ファイルも検索対象にする | 各項目の `scope: []`, `include_untracked: true`。Gitのignore対象は含まない |
 
-`scope`はリポジトリ相対で、複数指定は和集合です。`*`・`?`・`[abc]`は`/`をまたがず、
+検索モードの`scope`はリポジトリ相対で、複数指定は和集合です。`*`・`?`・`[abc]`は`/`をまたがず、
 `**/`は0階層以上に一致します。`src/*.c`は直下、`src/**/*.c`は直下と子ディレクトリのCファイルが対象です。
 ドットで始まる名前も対象です。ファイル・ディレクトリ名の直接指定も使えます。
-明示したscopeは実ファイルから選び、未追跡・ignore対象・入れ子の別リポジトリも含めます。
-`[]`または`["."]`はGit追跡済み一覧を使い、`include_untracked`でignoreされていない未追跡ファイルを追加します。
+どのscopeもGit追跡済み一覧から選び、`include_untracked`でignoreされていない未追跡ファイルを追加します。
+`[]`または`["."]`は一覧全体を選びます。ignoredファイルや別リポジトリはReaderで明示します。
 各調査項目のscopeをモデル起動前に検査し、ファイルがない指定は項目名とともにエラーにします。
 収集対象は全項目の和集合です。本文取得時は、一覧で返した説明文を再掲しません。
 Readerは明示したファイルだけを渡し、`include_untracked`とは併用しません。
@@ -61,8 +61,8 @@ Codex 0.156.1がこの指定を解釈し、直接のMCP呼出しを残します�
 ### LSPの探索結果を渡す
 
 検索では`navigation`でSymbolsの結果を初期入力へ含められます。
-JSONは`root`（LSPのworkspacePathの絶対パス）と`queries`（問い合わせ条件と結果の配列）を持ちます。
-`queries[].result`には`structuredContent`を持つ実際のSymbols MCPレスポンスを渡します。
+`navigation`は`{tool, result}`の配列、または前回の`navigation_id`です。
+`result`には`structuredContent`を持つ実際のSymbols MCPレスポンスを渡します。
 ホストは構造化データの位置パスだけをコピー側へ変換し、ページ情報・名前・エラーを保持します。
 表示用テキストや取得済みの本文はExplorerへ再送しません。
 `read_symbols`の`readSources`は全文のUTF-8ハッシュをコピーのハッシュと照合し、
@@ -183,12 +183,6 @@ Codexの使用量は含まれません。AGYのキャッシュ値をCodexと同�
 
 ## テスト・ビルドの出力
 
-[capture.py](../payload/.codex/es/capture.py)はコマンドを1回実行して、完全な標準出力・標準エラーと実行情報を保存します。
-既定では時間・ログ量でコマンドを打ち切りません。必要な場合だけ`--timeout`・`--log-limit-bytes`を指定します。
-正常終了ではログ末尾を短く、異常終了では長めに返します。詳細の確認には保存ログを使います。
-
-```bash
-python3 "$ES/capture.py" --repo . --out-dir "$RUN/tests" -- python3 tests/run_tests.py
-```
-
-終了コードだけでなく、実際に実行した試験と結果を確認します。
+実行・ログ保存にはBlocking Shellプラグインを使います。資源量が増大し得る処理は
+有限のメモリ上限・swap禁止を指定し、終了コードに加えて実行した試験と結果を確認します。
+`capture.py`は既存の単発ログ保存用CLIで、プロセス群の資源制限は提供しません。
