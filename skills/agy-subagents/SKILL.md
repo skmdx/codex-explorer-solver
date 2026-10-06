@@ -1,25 +1,30 @@
 ---
 name: agy-subagents
-description: Delegate independent reviews or authorized implementation to Gemini or Claude through blocking AGY MCP calls. Use when requested or when an external review materially helps; use explore-solve for source evidence collection.
+description: Delegate independent reviews or authorized Claude edits through blocking AGY MCP calls. Use explore-solve for source evidence collection.
 ---
 
-Use the `agy-subagents` MCP's `run` tool directly. It waits for the final result;
-this namespace is excluded from Code Mode. The host sets the 30-minute deadline.
-Do not launch AGY through the shell or wrap it in a background job.
+Use `run` directly, outside Code Mode. It waits for the final result.
+Obtain `scratch_ref` from Scratch's `create`; delete it after using the results.
+Its directory must be outside the target repository.
 
-Give a self-contained task with the needed facts and deliverable. Keep Claude
-review requests concise. Pass `repo` when files are needed; omit it for pure
-reasoning. Pass `scratch_ref` from Scratch's `create`; its directory must be outside
-the repository. After using the results, call Scratch's `delete` with the reference.
-Active runs are protected from deletion.
+Pass one `request` with `task` and `scratch_ref`:
 
-The default model is Claude Opus 5.5 (High). Use `models` to select a requested model.
-The harness handles review and edit model fallback using `agy.toml`; do not repeat calls
-to implement it yourself. Report the returned model, failures and incomplete reviews.
+- Review (default): add `repo` when files are needed. State the target scope,
+  question, and expected result, for example: "Review the uncommitted changes in
+  src/cache.py for stale-value reuse; return concrete findings with locations."
+  Read/search tools are available; commands and edits are not.
+- Edit: add `mode: "edit"` and required `repo`. Describe the authorized change
+  scope and expected behavior. The scope can name files, directories, or a feature;
+  exact filenames need not be known before investigation. The agent can edit and
+  run checks, but does not commit or push.
 
-`mode: review` provides read/search tools. `mode: edit` also allows file edits and
-commands: use it only for authorized work and name the files to change in the task.
+Normally omit model selection. Reviews use the configured order and automatically
+switch on usage limits or unavailable models. Only when a particular review model
+is needed, use `models` and set `preferred_model`; this is not a fixed-model guarantee.
+Editing uses the configured Claude model only, with no per-call override or fallback.
+If it fails or is unavailable, inspect partial changes and continue in the parent
+agent. Do not retry the edit through Gemini or bypass the tool through the shell.
 
-Evaluate the returned advice against the evidence. Inspect delegated edits and
-verify their behavior before accepting them. Failed runs retain their response,
-error and usage; a partial response is not successful completion.
+Evaluate advice against the evidence and verify delegated changes before accepting
+them. A completed invocation is not proof that the requested behavior works.
+Report the actual model and unresolved problems; inspect attempt logs when needed.

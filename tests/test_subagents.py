@@ -38,10 +38,10 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         self.env.stop(); self.config.stop(); self.temp.cleanup()
 
     async def run_task(self, **kwargs):
-        return await subagents.run('Review the given facts.', self.ref, **kwargs)
+        return await subagents.run(dict(task='Review the given facts.', scratch_ref=self.ref, **kwargs))
 
     async def test_review_returns_final_response_and_usage(self):
-        result = await self.run_task(model='claude-test', repo=str(self.repo))
+        result = await self.run_task(preferred_model='claude-test', repo=str(self.repo))
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual(result['usage']['total_tokens'], 130)
         self.assertIn('Reviewed', result['response'])
@@ -61,7 +61,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(argv[argv.index('--mode')+1], 'accept-edits')
 
     async def test_edit_requires_repository(self):
-        with self.assertRaisesRegex(ValueError, 'edit requires repo'):
+        with self.assertRaises(ValueError):
             await self.run_task(mode='edit')
 
     async def test_process_failure_keeps_response_and_usage(self):
@@ -109,6 +109,10 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
                 tools = {t.name:t for t in (await session.list_tools()).tools}
                 self.assertEqual(set(tools), {'models','run'})
                 fields = tools['run'].inputSchema['properties']
+                self.assertEqual(tools['run'].inputSchema['required'], ['request'])
+                definitions = tools['run'].inputSchema['$defs']
+                self.assertIn('repo', definitions['EditRequest']['required'])
+                self.assertNotIn('preferred_model', definitions['EditRequest']['properties'])
                 self.assertNotIn('timeout', fields)
                 self.assertNotIn('effort', fields)
                 self.assertNotIn('background', fields)
@@ -119,7 +123,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
     async def test_quota_fallback_resumes_progress_through_pro_to_flash(self):
         opus, pro, flash = subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'quota_after_progress',pro:'quota'})
-        result = await self.run_task(model=opus)
+        result = await self.run_task(preferred_model=opus)
         self.assertEqual(result['status'],'completed',result)
         self.assertEqual(result['model'],flash)
         self.assertIn('Verified checkpoint',result['response'])
@@ -133,7 +137,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
     async def test_finished_resume_with_inherited_quota_is_completed(self):
         opus, pro, _ = subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'quota',pro:'inherited_quota'})
-        result = await self.run_task(model=opus)
+        result = await self.run_task(preferred_model=opus)
         self.assertEqual(result['status'],'completed',result)
         self.assertEqual(result['model'],pro)
         self.assertEqual(len(result['attempts']),2)
@@ -142,19 +146,19 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         opus, pro, _ = subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'native_quota',pro:'inherited_interruption'})
         started=time.monotonic()
-        result=await self.run_task(model=opus)
+        result=await self.run_task(preferred_model=opus)
         self.assertLess(time.monotonic()-started,5)
         self.assertEqual(result['status'],'completed',result)
         self.assertEqual(result['model'],pro)
         os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'native_quota'})
-        result=await self.run_task(model=opus)
+        result=await self.run_task(preferred_model=opus)
         self.assertEqual([a['model'] for a in result['attempts']],[pro])
         self.assertEqual(result['skipped_models'][0]['model'],opus)
 
     async def test_all_cached_models_return_without_process(self):
         for model in subagents.CONFIG['review_model_order']:
             subagents.agy.remember_quota(model,'Individual quota reached. Resets in 1h.')
-        result=await self.run_task(model=subagents.CONFIG['review_model_order'][0])
+        result=await self.run_task(preferred_model=subagents.CONFIG['review_model_order'][0])
         self.assertEqual(result['status'],'failed')
         self.assertEqual(result['attempts'],[])
         self.assertEqual(len(result['skipped_models']),3)
@@ -163,7 +167,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
     async def test_startup_unavailability_starts_next_model_with_original_task(self):
         opus, pro, _ = subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'model_unavailable'})
-        result = await self.run_task(model=opus)
+        result = await self.run_task(preferred_model=opus)
         self.assertEqual(result['model'],pro)
         self.assertEqual(result['status'],'completed',result)
         self.assertIsNone(result['attempts'][1]['resumed_from'])
@@ -174,20 +178,20 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_models_unavailable_returns_failure_and_all_attempts(self):
         os.environ['FAKE_CASE']='quota'
-        result=await self.run_task(model=subagents.CONFIG['review_model_order'][0])
+        result=await self.run_task(preferred_model=subagents.CONFIG['review_model_order'][0])
         self.assertEqual(result['status'],'failed')
         self.assertEqual(len(result['attempts']),3)
 
     async def test_pro_starts_at_pro_and_timeout_reaps_without_trying_flash(self):
         opus, pro, flash=subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES']=json.dumps({pro:'quota'})
-        result=await self.run_task(model=pro)
+        result=await self.run_task(preferred_model=pro)
         self.assertEqual([a['model'] for a in result['attempts']],[pro,flash])
         os.environ['FAKE_MODEL_CASES']=json.dumps({opus:'quota_after_progress',pro:'timeout'})
         pid=self.root/'pid';os.environ['FAKE_PID_FILE']=str(pid)
         with patch.dict(subagents.CONFIG,timeout_seconds=0.5), \
                 patch.object(subagents,'run_attempt',wraps=subagents.run_attempt) as attempts:
-            result=await self.run_task(model=opus)
+            result=await self.run_task(preferred_model=opus)
         self.assertEqual(result['status'],'timeout',result)
         self.assertEqual(len(result['attempts']),2)
         self.assertLess(attempts.call_args_list[1].args[7],attempts.call_args_list[0].args[7])
@@ -197,7 +201,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         opus, pro, _=subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES']=json.dumps({opus:'quota_after_progress',pro:'timeout'})
         pid=self.root/'pid';os.environ['FAKE_PID_FILE']=str(pid)
-        task=asyncio.create_task(self.run_task(model=opus))
+        task=asyncio.create_task(self.run_task(preferred_model=opus))
         async def started():
             while not pid.exists():await asyncio.sleep(0.01)
         await asyncio.wait_for(started(),5)
@@ -211,49 +215,55 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         for case in ('auth','bad_model','invalid_json','native_timeout','nonzero_success'):
             with self.subTest(case=case):
                 os.environ['FAKE_CASE']=case
-                result=await self.run_task(model=opus)
+                result=await self.run_task(preferred_model=opus)
                 self.assertEqual(len(result['attempts']),1)
                 self.assertNotEqual(result['status'],'completed')
 
     async def test_unlisted_model_falls_back_to_configured_order(self):
         opus, pro, _ = subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES'] = json.dumps({'claude-sonnet-5-5-high':'quota_after_progress',opus:'quota'})
-        result = await self.run_task(model='claude-sonnet-5-5-high')
+        result = await self.run_task(preferred_model='claude-sonnet-5-5-high')
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual([a['model'] for a in result['attempts']], ['claude-sonnet-5-5-high', opus, pro])
         self.assertIn('Verified checkpoint', result['response'])
 
-    async def test_edit_quota_resumes_partial_changes(self):
-        opus, pro, _ = subagents.CONFIG['review_model_order']
-        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'quota_after_progress'})
-        result = await self.run_task(mode='edit', repo=str(self.repo))
-        self.assertEqual(result['status'], 'completed', result)
-        self.assertEqual([a['model'] for a in result['attempts']], [opus, pro])
-        self.assertEqual(result['attempts'][1]['resumed_from'], 'fixture-1')
-        self.assertEqual(self.source.read_text(), 'edited\n')
-        argv = json.loads((Path(result['run_dir'])/'report.json').read_text())['argv']
-        self.assertEqual(argv[argv.index('--agent')+1], 'es-editor')
-        self.assertIn(str(self.repo), argv)
-        self.assertNotIn('--mode', argv)
+    async def test_edit_failure_never_falls_back_to_gemini(self):
+        for failure in ('quota_after_progress', 'model_not_recognized', 'native_quota'):
+            with self.subTest(failure=failure):
+                os.environ['FAKE_CASE'] = failure
+                result = await self.run_task(mode='edit', repo=str(self.repo))
+                self.assertEqual(result['status'], 'failed', result)
+                self.assertEqual([a['model'] for a in result['attempts']], [subagents.CONFIG['edit_model']])
+                self.assertEqual(result['model'], subagents.CONFIG['edit_model'])
+                if failure == 'quota_after_progress':
+                    self.assertEqual(result['response'], 'Partial review.')
+                    self.assertEqual(self.source.read_text(), 'partial edit\n')
 
-    async def test_unrecognized_model_between_quota_and_resume(self):
+    async def test_edit_cached_quota_does_not_launch_other_models(self):
+        model = subagents.CONFIG['edit_model']
+        subagents.agy.remember_quota(model, 'Individual quota reached. Resets in 1h.')
+        result = await self.run_task(mode='edit', repo=str(self.repo))
+        self.assertEqual(result['status'], 'failed', result)
+        self.assertEqual(result['attempts'], [])
+        self.assertEqual([s['model'] for s in result['skipped_models']], [model])
+        self.assertEqual(self.source.read_text(), 'original\n')
+
+    async def test_edit_rejects_model_overrides_and_non_claude_configuration(self):
+        for key in ('model', 'preferred_model'):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                await self.run_task(mode='edit', repo=str(self.repo), **{key:'gemini-3.8-flash-high'})
+        with patch.dict(subagents.CONFIG, edit_model='gemini-3.8-flash-high'), self.assertRaisesRegex(ValueError, 'Claude'):
+            await self.run_task(mode='edit', repo=str(self.repo))
+        self.assertEqual(self.source.read_text(), 'original\n')
+        self.assertFalse(list(self.scratch.glob('agy-subagent-*')))
+
+    async def test_unrecognized_review_model_between_quota_and_resume(self):
         opus, pro, flash = subagents.CONFIG['review_model_order']
         os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'quota_after_progress', pro:'model_not_recognized', flash:'inherited_quota'})
-        result = await self.run_task(mode='edit', repo=str(self.repo))
+        result = await self.run_task(repo=str(self.repo))
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual([a['model'] for a in result['attempts']], [opus, pro, flash])
         self.assertEqual(result['attempts'][2]['resumed_from'], 'fixture-1')
-        self.assertEqual(self.source.read_text(), 'edited\n')
-
-    async def test_edit_native_quota_skips_cached_model(self):
-        opus, pro, _ = subagents.CONFIG['review_model_order']
-        os.environ['FAKE_MODEL_CASES'] = json.dumps({opus:'native_quota'})
-        first = await self.run_task(mode='edit', repo=str(self.repo))
-        self.assertEqual(first['status'], 'completed', first)
-        second = await self.run_task(mode='edit', repo=str(self.repo))
-        self.assertEqual(second['status'], 'completed', second)
-        self.assertEqual([a['model'] for a in second['attempts']], [pro])
-        self.assertEqual(second['skipped_models'][0]['model'], opus)
 
     async def test_mcp_call_completes_the_whole_fallback_chain(self):
         opus, pro, flash=subagents.CONFIG['review_model_order']
@@ -266,14 +276,14 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         async with stdio_client(params) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
-                reply=await session.call_tool('run',dict(task='Edit the requested file.',
-                    scratch_ref=self.ref,model=opus,mode='edit',repo=str(self.repo)))
+                reply=await session.call_tool('run',{'request':dict(task='Review the requested file.',
+                    scratch_ref=self.ref,preferred_model=opus,repo=str(self.repo))})
                 self.assertFalse(reply.isError)
                 result=json.loads(reply.content[0].text)
                 self.assertEqual(result['status'],'completed',result)
                 self.assertEqual(result['model'],flash)
                 self.assertEqual(len(result['attempts']),3)
-                self.assertEqual(self.source.read_text(), 'edited\n')
+                self.assertEqual(self.source.read_text(), 'original\n')
 
     async def test_running_mcp_survives_removal_of_its_plugin_cache(self):
         cached=self.root/'old-plugin'
@@ -287,8 +297,8 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
                 await session.initialize()
                 shutil.rmtree(cached)
                 for mode in ('review','edit'):
-                    reply=await session.call_tool('run',dict(task='Use the supplied repository.',
-                        scratch_ref=self.ref,repo=str(self.repo),mode=mode))
+                    reply=await session.call_tool('run',{'request':dict(task='Use the supplied repository.',
+                        scratch_ref=self.ref,repo=str(self.repo),mode=mode)})
                     self.assertFalse(reply.isError,reply)
                     result=json.loads(reply.content[0].text)
                     self.assertEqual(result['status'],'completed',result)

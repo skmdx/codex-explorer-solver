@@ -18,6 +18,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 import agy_backend as agy
 from scratch_space import ScratchSpace
@@ -47,7 +48,7 @@ async def stop(proc: asyncio.subprocess.Process) -> None:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
 async def models() -> str:
-    """List the AGY model slugs available to the authenticated account."""
+    """List AGY model slugs when a review needs a preferred model. Editing uses the configured Claude model."""
     proc = await asyncio.create_subprocess_exec(CONFIG['executable'], 'models',
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 start_new_session=True)
@@ -61,29 +62,44 @@ async def models() -> str:
     return stdout.decode(errors='replace')
 
 
-@mcp.tool(structured_output=False, annotations=ToolAnnotations(openWorldHint=True))
-async def run(task: str, scratch_ref: str, model: str | None = None,
-              repo: str | None = None, mode: Literal['review', 'edit'] = 'review') -> dict:
-    """Delegate a self-contained review or an authorized edit and wait until finished.
+class TaskRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    task: str = Field(min_length=1, description='Target scope, question or change, and expected result.')
+    scratch_ref: str
 
-    Call this MCP tool directly, outside code-mode cells. No poll handle is returned.
-    task describes the objective, relevant facts, deliverable and (for edits) files
-    to change. For Claude reviews, keep the request short and let it choose how to review.
-    repo adds the real repository for reading or editing; omit it for pure reasoning.
-    review exposes read/search tools only. edit also exposes file edits and commands;
-    use it only for work already authorized by the user, with a repo.
-    scratch_ref is returned by scratch.create; its directory must be outside repo.
-    Use scratch.delete after using the saved logs. Active runs are protected.
-    Default model is Claude Opus 5.5 (High); use models to find other model slugs.
-    Reviews and edits advance through agy.toml's review_model_order on quota
-    or model-unavailable errors, resuming the AGY conversation when one exists.
-    A model outside that order is tried first, followed by the configured order.
-    The deadline is configured in agy.toml (30 minutes), not chosen per call.
-    Returns the actual model, attempt history, total usage, response and saved logs.
-    Verify advice and edits.
+
+class ReviewRequest(TaskRequest):
+    """Read/search only. Omit repo for reasoning from supplied facts."""
+    mode: Literal['review'] = 'review'
+    repo: str | None = None
+    preferred_model: str | None = Field(default=None, description='Normally omit. Starting preference, not a fixed model; automatic fallback may select another model.')
+
+
+class EditRequest(TaskRequest):
+    """Authorized edits and commands in repo. Uses configured Claude only; no model override or fallback."""
+    mode: Literal['edit']
+    repo: str = Field(min_length=1)
+
+
+REQUEST = TypeAdapter(ReviewRequest | EditRequest)
+
+
+@mcp.tool(structured_output=False, annotations=ToolAnnotations(openWorldHint=True))
+async def run(request: ReviewRequest | EditRequest) -> dict:
+    """Delegate a review or authorized edit and wait for the final result.
+
+    Call directly, outside Code Mode. scratch_ref comes from scratch.create;
+    its directory must be outside repo. Delete it after using the saved results.
+    Review may switch models on availability failures. Edit never switches models;
+    on failure, inspect any partial changes and continue in the parent agent.
+    Check advice and changed behavior before accepting the result. Report the
+    actual model and unresolved problems; attempt logs are available for diagnosis.
     """
-    with ScratchSpace().lease(scratch_ref) as scratch:
-        return await _run(task, scratch, model, repo, mode)
+    parsed = REQUEST.validate_python(request)
+    with ScratchSpace().lease(parsed.scratch_ref) as scratch:
+        return await _run(parsed.task, scratch,
+                          parsed.preferred_model if isinstance(parsed, ReviewRequest) else None,
+                          parsed.repo, parsed.mode)
 
 
 async def _run(task: str, scratch: Path, model: str | None,
@@ -95,6 +111,8 @@ async def _run(task: str, scratch: Path, model: str | None,
         raise ValueError('scratch directory must be outside repo')
     if mode == 'edit' and root is None:
         raise ValueError('edit requires repo')
+    if mode == 'edit' and not CONFIG['edit_model'].startswith('claude-'):
+        raise ValueError('edit_model must be a Claude model; Gemini editing is disabled')
     out = create_directory(scratch, prefix='agy-subagent-')
     workspace = out/'workspace'
     definitions = workspace/'.agents/agents'
@@ -104,9 +122,13 @@ async def _run(task: str, scratch: Path, model: str | None,
     git = await asyncio.create_subprocess_exec('git', 'init', '-q', str(workspace))
     if await git.wait():
         raise RuntimeError('could not initialize AGY runtime repository')
-    selected_model: str = model or CONFIG['subagent_model']
-    order = CONFIG['review_model_order']
-    candidates: list[str] = order[order.index(selected_model):] if selected_model in order else [selected_model, *order]
+    if mode == 'edit':
+        selected_model = CONFIG['edit_model']
+        candidates = [selected_model]
+    else:
+        order = CONFIG['review_model_order']
+        selected_model = model or order[0]
+        candidates = order[order.index(selected_model):] if selected_model in order else [selected_model, *order]
     candidates, skipped_models = agy.available_models(candidates)
     if root:
         task = f'REPOSITORY: {root}\n\n{task}'

@@ -27,21 +27,13 @@ $codex-explorer-solver:explore-solve
 AGYを使うには、認証済みの`agy`と`uv`が必要です。プラグインのMCPサーバーは`uv`で依存ライブラリを読み込みます。
 調査対象のソースと質問はGoogleのサービスへ送信されます。
 
-独立レビューや実装の委譲には、同梱の`agy-subagents`スキルを使います。
-`agy-subagents.run`を直接呼び出すと、GeminiまたはClaudeの終了まで待って結果を返します。
-ファイルを使うときだけ`repo`を渡し、純粋な設計レビューでは依頼文だけを渡せます。
-既定は読取り・検索のみで、許可済みの編集には`mode: edit`を指定します。
-両MCPとも待機期限は設定側の30分です。シェル起動やポーリングの手順は不要です。
-モデル指定なしではClaude Opus 5.5 (High)を使用します。
-レビュー・編集とも、Opusから始めてAGYが利用上限・モデル利用不能を返すと、ハーネスが
-Gemini Pro（High）、Gemini Flash（High）の順に切り替えます。Pro指定ならFlashが次候補です。
-順序は`agy.toml`の`review_model_order`で管理し、1回のMCP呼出しの期限を全試行で共有します。
-リスト外のモデルを指定した場合は、そのモデルの次に設定リストの先頭から試します。
-途中で上限に達した場合はAGYの会話IDを引き継ぎ、次のモデルが既存の調査履歴から続行します。
-収集・レビューの会話再開では`--mode plan`を再指定せず、作業の継続を促します。参照修正時は検証エラーも渡します。
-回答には実際のモデル・試行履歴・全試行の使用量を返します。認証エラー・タイムアウトは再試行しません。
-復旧時刻付きのquotaエラーは、AGY内部の再試行を待たずに検出します。
-収集・レビュー・編集とも次候補へ切り替え、復旧時刻までは同じモデルを起動しません。
+独立レビューや実装の委譲には、同梱の[agy-subagentsスキル](skills/agy-subagents/SKILL.md)を使います。
+`agy-subagents.run`は`request: {task, scratch_ref, ...}`を受け取り、終了まで待ちます。
+レビューは既定のモードで、ファイルを使うときだけ`repo`を指定します。
+編集は`mode: "edit"`と`repo`が必須です。設定されたClaudeだけで実行し、Geminiへの切替と呼出しごとのモデル変更は受け付けません。
+レビューの`preferred_model`は優先指定で、利用上限・利用不能時には自動切替します。通常は省略してください。
+編集が失敗した場合は部分変更を確認し、親エージェントが作業を引き継ぎます。
+モデル設定・切替・ログの詳細は[AGYの実行と待機](docs/DESIGN.ja.md#agyの実行と待機)を参照してください。
 
 ## 内部で行うこと
 
@@ -138,7 +130,7 @@ python3 tests/smoke_direct_collect.py --out-dir /home/user/codex-work/tmp/es-dir
 ```
 
 一般の委譲は`python3 tests/smoke_subagents.py --out-dir /home/user/codex-work/tmp/agy-subagents-check`
-で検証します。実際のClaudeレビューとGeminiによる小さな編集を順に実行し、各起動を65秒遅らせて
+で検証します。実際のレビューとClaudeによる小さな編集を順に実行し、各起動を65秒遅らせて
 直接MCP待機・Code Modeからの呼出し拒否・ポーリング0回・編集結果を確認します。
 
 MCPの引数、返却ファイル、原文検証と使用量記録の実装は、[設計とツールの使い方](docs/DESIGN.ja.md)を参照してください。

@@ -10,6 +10,6 @@ skills: []
 plugins: []
 ---
 
-Implement the supplied task in the named files. Preserve unrelated work.
+Implement the supplied task within its authorized scope. Preserve unrelated work.
 Check the changed behavior. Call finish with what changed, verification results,
 and any remaining problems. Do not commit, push, publish, or contact others.
