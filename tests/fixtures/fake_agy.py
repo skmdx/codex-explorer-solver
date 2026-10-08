@@ -66,7 +66,11 @@ if case=='timeout':
     time.sleep(10)
 if case=='invalid_json':print('NOT JSON',flush=True);sys.exit(0)
 if case=='nested':emit({'event':'step_update','step_update':{'subagent_info':{'subagents':[{}]},'step_index':1}})
-if case=='unexpected_tool':emit({'event':'step_update','step_update':{'step_type':'tool','step_index':1,'tool_name':'run_command'}})
+if case=='unexpected_tool':emit({'event':'step_update','step_update':{'step_type':'tool','step_index':1,'tool_name':'delete_file'}})
+if case=='integrations':
+    assert 'ORIGINAL REPOSITORY: ' in text
+    for n, name in enumerate(['view_file','call_mcp_tool','run_command','command_status']):
+        emit({'event':'step_update','step_update':{'step_type':'tool','step_index':n,'tool_name':name}})
 if case in ('write_step','mcp_step'):
     emit({'event':'step_update','step_update':{'step_type':'tool','step_index':1,'tool_name':'write_to_file' if case=='write_step' else 'mcp_send_message'}})
 if case=='many_tools':

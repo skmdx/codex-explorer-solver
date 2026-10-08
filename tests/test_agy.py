@@ -524,6 +524,14 @@ class AgyRunnerTests(Fixture):
         self.assertTrue((workspace/'.agents/agents/es-explorer.md').is_file())
     def test_reader_cannot_cite_unprovided_file(self):
         r=self.invoke(extra=['--mode','reader','--path','src/other.py']);self.assertNotEqual(r.returncode,0)
+    def test_collection_integrations_in_both_modes(self):
+        for mode, extra in [('explorer', []), ('reader', ['--mode','reader','--path','src/example.py'])]:
+            with self.subTest(mode=mode):
+                r=self.invoke('integrations',extra=extra,out=mode)
+                self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+                definition=(self.base/mode/'workspace/.agents/agents'/f'es-{mode}.md').read_text()
+                self.assertIn('plugins: ["symbols", "gh-issue"]',definition)
+                self.assertNotIn('commandExecutionPolicy: "off"',definition)
     def test_check_no_model_run_or_export(self):
         r=subprocess.run([sys.executable,str(KIT/'payload/.codex/es/locate.py'),'--check','--agy',str(FAKE)],capture_output=True,text=True)
         self.assertEqual(r.returncode,0,r.stderr);self.assertFalse(json.loads(r.stdout)['model_inference_executed'])

@@ -89,8 +89,11 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
     if not executable: raise EvidenceError('agy CLI not found; install/authenticate it; no Codex fallback')
     role = 'repo_reader' if args.mode == 'reader' else 'repo_explorer'
     agent = 'es-reader' if args.mode == 'reader' else 'es-explorer'
-    tools = ['finish'] if args.mode == 'reader' else ['view_file','grep_search','finish']
     definition = (HERE/'agy_agents'/f'{agent}.md').read_text(encoding='utf-8')
+    tools = json.loads(next(line.removeprefix('tools: ') for line in definition.splitlines()
+                            if line.startswith('tools: ')))
+    # AGY injects these runtime tools; they are not frontmatter registry names.
+    tools += ['call_mcp_tool', 'command_status']
     schema = HERE/'agy-handoff.schema.json'
     if not schema.is_file(): raise EvidenceError('agy-handoff.schema.json is missing')
     if not args.state_dir.exists():
@@ -121,7 +124,7 @@ def run(args: argparse.Namespace) -> tuple[dict,int]:
         subprocess.run(['git', 'init', '-q', str(out/'workspace')], check=True)
         if args.mode != 'reader':
             subprocess.run(['git', 'init', '-q', str(source_root)], check=True)
-        request = 'QUESTION:\n' + task
+        request = 'QUESTION:\n' + task + '\n\nORIGINAL REPOSITORY: ' + str(root)
         scope = dict(mode=args.mode, paths=args.path, scopes=args.scope,
                     file_count=manifest['file_count'], source_bytes=manifest['total_bytes'],
                     skipped_count=len(manifest['skipped']), unmatched_scopes=manifest['unmatched_scopes'],
