@@ -38,9 +38,31 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
         self.env.stop(); self.config.stop(); self.temp.cleanup()
 
     async def run_task(self, **kwargs):
-        return await subagents.run(dict(task='Review the given facts.', scratch_ref=self.ref, **kwargs))
+        result = await subagents.run(dict(task='Review the given facts.', scratch_ref=self.ref, **kwargs))
+        return json.loads((Path(result['run_dir']) / 'report.json').read_text())
 
-    async def test_review_returns_final_response_and_usage(self):
+    async def test_compact_response_and_paged_saved_report(self):
+        result = await subagents.run(dict(task='Review the given facts.', scratch_ref=self.ref))
+        self.assertFalse({'usage', 'attempts', 'skipped_models', 'error'} & result.keys())
+        self.assertIn('response', result)
+        usage = json.loads(subagents.read_report(result['run_dir'], '/usage')['text'])
+        self.assertEqual(usage['total_tokens'], 130)
+        with patch.dict(os.environ, FAKE_CASE='long_response'):
+            result = await subagents.run(dict(task='Review the given facts.', scratch_ref=self.ref))
+        self.assertEqual(len(result['response']), 6000)
+        self.assertEqual(result['total_chars'], 16000)
+        chunks, offset = [result['response']], result['next_offset']
+        while offset is not None:
+            page = subagents.read_report(result['run_dir'], '/response', offset, 1000)
+            chunks.append(page['text'])
+            self.assertLessEqual(len(page['text']), 1000)
+            offset = page['next_offset']
+        self.assertEqual(''.join(chunks), '日本語\n' * 4000)
+        (self.repo / 'report.json').write_text('{}')
+        with self.assertRaises(ValueError):
+            subagents.read_report(str(self.repo))
+
+    async def test_review_saves_final_response_and_usage(self):
         result = await self.run_task(preferred_model='claude-test', repo=str(self.repo))
         self.assertEqual(result['status'], 'completed', result)
         self.assertEqual(result['usage']['total_tokens'], 130)
@@ -107,7 +129,7 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = {t.name:t for t in (await session.list_tools()).tools}
-                self.assertEqual(set(tools), {'models','run'})
+                self.assertEqual(set(tools), {'models','run','read_report'})
                 fields = tools['run'].inputSchema['properties']
                 self.assertEqual(tools['run'].inputSchema['required'], ['request'])
                 definitions = tools['run'].inputSchema['$defs']
@@ -282,7 +304,10 @@ class SubagentTests(unittest.IsolatedAsyncioTestCase):
                 result=json.loads(reply.content[0].text)
                 self.assertEqual(result['status'],'completed',result)
                 self.assertEqual(result['model'],flash)
-                self.assertEqual(len(result['attempts']),3)
+                self.assertEqual(result['attempt_count'],3)
+                details=await session.call_tool('read_report',{'run_dir':result['run_dir'],'pointer':'/attempts'})
+                self.assertFalse(details.isError)
+                self.assertEqual(len(json.loads(json.loads(details.content[0].text)['text'])),3)
                 self.assertEqual(self.source.read_text(), 'original\n')
 
     async def test_running_mcp_survives_removal_of_its_plugin_cache(self):

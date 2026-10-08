@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, validate_call
 from evidence import evidence_blocks, format_evidence, load_handoff, verify_handoff
 from agy_snapshot import select_paths
 from scratch_space import ScratchSpace
+from reports import read_report
 from word_ids import create_directory, store_reference
 
 HERE = Path(__file__).resolve().parent
@@ -64,6 +65,7 @@ class CollectionMCP(FastMCP):
 
 
 mcp = CollectionMCP("explore-solve")
+mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))(read_report)
 
 
 class EvidenceRequest(TypedDict):
@@ -115,28 +117,59 @@ def catalog(run: Path) -> dict:
     report = json.loads((run/'report.json').read_text())
     result = {k: report[k] for k in ('status', 'handoff_status')}
     if report.get('error'):
-        result['error'] = report['error']
+        result['error'] = str(report['error'])[:1000]
+        if len(str(report['error'])) > 1000:
+            result['error_truncated'] = True
     result['effective_model'] = report.get('effective_model')
     result['run_dir'] = str(run)
     evidence = report.get('evidence')
     result.update(location_page(evidence, 0, 40))
     if (report.get('scope') or {}).get('unmatched_scopes'):
-        result['unmatched_scopes'] = report['scope']['unmatched_scopes']
+        result.update(summary_strings('unmatched_scopes', report['scope']['unmatched_scopes']))
     if evidence and evidence['unresolved']:
-        result['unresolved'] = evidence['unresolved']
+        result.update(summary_strings('unresolved', evidence['unresolved']))
+    return result
+
+
+def summary_strings(key: str, values: list[str]) -> dict:
+    selected = []
+    used = 0
+    for value in values:
+        display = value[:1000]
+        size = len(json.dumps(display, ensure_ascii=False))
+        if used + size > 2000:
+            break
+        selected.append(display)
+        used += size
+    result: dict[str, Any] = {key: selected}
+    if selected != values:
+        result.update({key + '_count': len(values), key + '_truncated': True})
     return result
 
 
 def location_page(evidence: dict | None, offset: int, limit: int) -> dict:
-    if offset < 0 or limit < 1:
-        raise ValueError('offset must be nonnegative and limit positive')
+    if offset < 0 or not 1 <= limit <= 100:
+        raise ValueError('offset must be nonnegative and limit 1..100')
     entries = [(category, item) for category in ('primary', 'related')
                for item in (evidence or {}).get(category, [])]
-    result: dict = {'locations': [dict(id=index+1, role=category,
-               **{k:item[k] for k in ('path','start','end','symbol','evidence')})
-               for index, (category, item) in enumerate(entries[offset:offset+limit], offset)]}
-    if offset + limit < len(entries):
-        result.update(next_offset=offset+limit, total_locations=len(entries))
+    locations, used = [], 0
+    for index, (category, item) in enumerate(entries[offset:offset+limit], offset):
+        location: dict[str, Any] = dict(id=index+1, role=category,
+                        **{k:item[k] for k in ('path','start','end','symbol','evidence')})
+        truncated = [key for key in ('symbol', 'evidence') if len(location[key]) > 1000]
+        if truncated:
+            for key in truncated:
+                location[key] = location[key][:1000]
+            location['truncated_fields'] = truncated
+        size = len(json.dumps(location, ensure_ascii=False))
+        if locations and used + size > 6000:
+            break
+        locations.append(location)
+        used += size
+    result: dict = {'locations': locations}
+    end = offset + len(locations)
+    if end < len(entries):
+        result.update(next_offset=end, total_locations=len(entries))
     return result
 
 

@@ -28,3 +28,7 @@ agent. Do not retry the edit through Gemini or bypass the tool through the shell
 Evaluate advice against the evidence and verify delegated changes before accepting
 them. A completed invocation is not proof that the requested behavior works.
 Report the actual model and unresolved problems; inspect attempt logs when needed.
+Responses up to 6000 characters arrive together. If `next_offset` is present,
+continue with `read_report(run_dir, pointer="/response", offset=next_offset)`.
+Use `/usage` or `/attempts` only when those details matter. `max_chars` defaults
+to 6000 and accepts 1000–20000 to balance detail and round trips.

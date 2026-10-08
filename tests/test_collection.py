@@ -252,15 +252,36 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first['handoff_status'], 'partial')
         self.assertEqual(first['unresolved'], ['missing caller'])
         self.assertEqual(first['total_locations'], 85)
-        second = list_evidence(str(run), offset=first['next_offset'])
-        last = list_evidence(str(run), offset=second['next_offset'])
-        self.assertNotIn('next_offset', last)
-        locations = first['locations']+second['locations']+last['locations']
+        page, locations = first, list(first['locations'])
+        while 'next_offset' in page:
+            page = list_evidence(str(run), offset=page['next_offset'])
+            locations.extend(page['locations'])
         self.assertEqual([x['id'] for x in locations], list(range(1,86)))
         self.assertEqual([x['evidence'] for x in locations], [f'fact {i}' for i in range(85)])
         self.assertEqual(locations[50]['role'], 'related')
         self.assertIn('return 1', read_evidence(str(run), [85])['text'])
         self.assertIn('usage', report)
+
+    async def test_long_index_and_unresolved_details_are_bounded_and_recoverable(self):
+        from server import read_report
+        result = await self.run_collection()
+        run = Path(result['run_dir'])
+        path = run / 'report.json'
+        report = json.loads(path.read_text())
+        report['evidence']['primary'][0]['evidence'] = 'long fact ' * 3000
+        report['evidence']['unresolved'] = ['unresolved ' * 1000] * 50
+        path.write_text(json.dumps(report))
+        first = catalog(run)
+        self.assertLess(len(json.dumps(first)), 12000)
+        self.assertTrue(first['unresolved_truncated'])
+        self.assertEqual(first['unresolved_count'], 50)
+        self.assertEqual(first['locations'][0]['truncated_fields'], ['evidence'])
+        parts, offset = [], 0
+        while offset is not None:
+            page = read_report(str(run), '/evidence/primary/0/evidence', offset)
+            parts.append(page['text'])
+            offset = page['next_offset']
+        self.assertEqual(''.join(parts), report['evidence']['primary'][0]['evidence'])
 
     async def test_missing_report_bounds_runner_log_and_keeps_full_file(self):
         worker = self.base/'failed_worker.py'

@@ -22,12 +22,14 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 import agy_backend as agy
 from scratch_space import ScratchSpace
+from reports import read_report, text_page
 
 HERE = Path(__file__).resolve().parent
 CONFIG = tomllib.loads((HERE/'agy.toml').read_text())
 AGENT_DEFINITIONS = {name: (HERE/'agy_agents'/f'{name}.md').read_bytes()
                      for name in ('es-reviewer', 'es-editor')}
 mcp = FastMCP('agy-subagents')
+mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))(read_report)
 REVIEW_TOOLS = ['view_file', 'grep_search', 'finish']
 EDIT_TOOLS = REVIEW_TOOLS + ['find_by_name', 'list_dir', 'run_command',
                             'write_to_file', 'replace_file_content', 'multi_replace_file_content']
@@ -176,7 +178,18 @@ async def _run(task: str, scratch: Path, model: str | None,
     report.update(run_dir=str(out), attempts=attempts, usage=usage, skipped_models=skipped_models,
                   elapsed_seconds=round(time.monotonic()-started, 3))
     (out/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n')
-    return {key: report[key] for key in ('status', 'response', 'error', 'usage', 'run_dir', 'model', 'attempts', 'skipped_models')}
+    page = text_page(report['response'])
+    result = {key: report[key] for key in ('status', 'run_dir', 'model')}
+    result['response'] = page['text']
+    if page['next_offset'] is not None:
+        result.update(next_offset=page['next_offset'], total_chars=page['total_chars'])
+    if report['error']:
+        result['error'] = str(report['error'])[:1000]
+        if len(str(report['error'])) > 1000:
+            result['error_truncated'] = True
+    if len(attempts) > 1 or skipped_models:
+        result.update(attempt_count=len(attempts), skipped_model_count=len(skipped_models))
+    return result
 
 
 async def run_attempt(model: str, mode: str, agent: str, root: Path | None, workspace: Path,

@@ -92,6 +92,7 @@ if case in ('quota','quota_after_progress'):
           'usage':review_usage()}});sys.exit(1)
 if agent in ('es-reviewer','es-editor'):
     response = 'Reviewed the supplied task.'
+    if case == 'long_response': response = '日本語\n' * 4000
     if '--conversation' in args and pathlib.Path('conversation_state.txt').exists():
         assert 'Continue the original task' in text
         response += pathlib.Path('conversation_state.txt').read_text()

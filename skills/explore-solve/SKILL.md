@@ -24,6 +24,10 @@ or when collection is explicitly requested. Group facts sharing a source area.
    locations. Read needed IDs with `read_evidence`. Repeat the same IDs until `complete`.
    Judge from those originals and reuse them. After context loss, set `reread: true`
    on the first call only.
+   The index defaults to at most 40 locations and about 6000 characters. Truncated
+   descriptions or unresolved lists are marked; use `read_report(run_dir, pointer)`
+   for their full saved JSON fields. Its default 6000-character page can be raised
+   to 20000 with `max_chars` when more detail is needed together.
 5. On failure, retry with `request: {params_file, updates}`; updates replace only
    specified fields. After using the evidence, delete the Scratch reference.
 
