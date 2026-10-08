@@ -21,9 +21,11 @@ or when collection is explicitly requested. Group facts sharing a source area.
    Include `read_symbols` responses to reuse matching source already read.
    Navigation is saved automatically; reuse the returned `navigation_id`.
 4. If the index has `next_offset`, use `list_evidence(run_dir, offset)` for more
-   locations. Read needed IDs with `read_evidence`. Repeat the same IDs until `complete`.
-   Judge from those originals and reuse them. After context loss, set `reread: true`
-   on the first call only.
+   locations. Read needed IDs with `read_evidence`; continue with its returned `ids`
+   and `next_offset` as `offset`, keeping other arguments, until `next_offset` is null.
+   Failed IDs appear in `errors` beside valid source. Repeating a request replays it.
+   Use `reuse_ids` only for full evidence already in context. After context loss,
+   use `reread: true` to ignore reuse and saved Symbols receipts throughout the read.
    The index defaults to at most 40 locations and about 6000 characters. Truncated
    descriptions or unresolved lists are marked; use `read_report(run_dir, pointer)`
    for their full saved JSON fields. Its default 6000-character page can be raised

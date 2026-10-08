@@ -72,10 +72,15 @@ the collection even when locations span pages. Usage and attempt history stay
 in `run_dir/report.json`; read them only when needed for diagnosis or accounting.
 Use `read_evidence(run_dir, ids)` for the originals needed to judge the next decision.
 It checks source hashes, combines overlapping lines, and preserves whitespace and
-line endings for patching. Repeating the same IDs continues until `complete` is true.
-`max_chars` controls page size. Completed ranges are reused across ID selections
-and matching Symbols receipts; incomplete pages remain available.
-To reread after context loss, set `reread: true` on the first call, then continue normally.
+line endings for patching. Continue with returned `ids` and `next_offset` as `offset`,
+keeping other arguments; null `next_offset` means complete. Identical requests replay
+the same page while sources remain unchanged. `max_chars` controls page size.
+Failed IDs appear in `errors`; valid source is still returned. If source changes
+during paging, the response sets `restarted: true` and returns valid source from
+offset zero, so an old offset cannot skip text in the smaller selection.
+`reuse_ids` explicitly identifies full evidence already in context; overlapping
+ranges and matching Symbols receipts are omitted. No implicit delivery state is saved.
+After context loss, keep `reread: true` for all pages to ignore both forms of reuse.
 
 Full evidence and usage remain in `run_dir`. Use saved diagnostic files only when the
 index and selected originals leave a question unanswered. Once they are no longer

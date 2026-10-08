@@ -158,6 +158,18 @@ def _exact_lines(text: str) -> list[str]:
     return [line+'\n' for line in lines[:-1]] + ([lines[-1]] if lines[-1] else [])
 
 
+def verify_location(root: Path, item: dict, sources: dict, *, include_source: bool = False) -> dict:
+    """Verify one location, sharing decoded files within a single read operation."""
+    key = (item['path'], item['encoding'])
+    if key not in sources:
+        raw, lines, _ = source_bytes(root, *key)
+        exact_lines = _exact_lines(raw.decode(item['encoding'])) if include_source else []
+        sources[key] = (lines, hashlib.sha256(raw).hexdigest(), exact_lines)
+    lines, digest, exact_lines = sources[key]
+    _check_range(item['path'], lines, digest, item['start'], item['end'], item['sha256'])
+    return dict(item, source=''.join(exact_lines[item['start']-1:item['end']])) if include_source else item
+
+
 def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = False) -> dict[str, Any]:
     validate_shape(data)
     sources: dict[tuple[str, str], tuple[list[str], str, list[str]]] = {}
@@ -167,16 +179,9 @@ def verify_handoff(root: Path, data: dict[str, Any], *, include_source: bool = F
     for category in ("primary", "related"):
         excerpts = []
         for item in data[category]:
-            path = item["path"]
-            key = (path, item["encoding"])
-            if key not in sources:
-                raw, lines, _ = source_bytes(root, *key)
-                exact_lines = _exact_lines(raw.decode(item['encoding'])) if include_source else []
-                sources[key] = (lines, hashlib.sha256(raw).hexdigest(), exact_lines)
-            lines, digest, exact_lines = sources[key]
-            _check_range(path, lines, digest, item["start"], item["end"], item["sha256"])
+            verified = verify_location(root, item, sources, include_source=include_source)
             if include_source:
-                excerpts.append(dict(item, source=''.join(exact_lines[item['start']-1:item['end']])))
+                excerpts.append(verified)
         if include_source:
             result[category] = excerpts
     if include_source:

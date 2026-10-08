@@ -23,7 +23,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, validate_call
 
-from evidence import evidence_blocks, format_evidence, load_handoff, verify_handoff
+from evidence import EvidenceError, evidence_blocks, format_evidence, load_handoff, verify_location
 from agy_snapshot import select_paths
 from scratch_space import ScratchSpace
 from reports import read_report
@@ -340,61 +340,68 @@ def save_navigation(navigation: dict, scratch: Path) -> str:
 
 @mcp.tool(structured_output=False, annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
 def read_evidence(run_dir: str, ids: list[int], reread: bool = False,
-                  max_chars: int = 12000) -> dict:
+                  max_chars: int = 12000, offset: int = 0,
+                  reuse_ids: list[int] | None = None) -> dict:
     """Read selected original-source IDs from collect, checking current hashes.
 
-    Output is paginated, never silently truncated: repeat the same IDs to continue
-    from the last delivered offset. Completed source ranges are reused across ID
-    selections and matching Symbols readSources receipts. Source blocks preserve
-    whitespace and line endings, with range labels outside the body for patching.
-    Set reread=true on the first call to reread after context loss. Select just the evidence needed.
-    Reuse returned source; do not reread those ranges with shell tools. Increase max_chars
-    if the client can display more. All evidence remains saved in run_dir.
+    Continue with returned ids and next_offset as offset, keeping other arguments.
+    Null next_offset means complete. Repeating a request replays the page; no read
+    position is stored. Independent failures appear in errors beside valid source.
+    If a source changes during paging, offset resets to zero with restarted=true.
+    reuse_ids omits ranges whose full source you already retain; Symbols receipts
+    from collection are also reused. Set reread=true to ignore both after context
+    loss. Source whitespace and line endings are preserved for patching.
     """
     with ScratchSpace().lease_path(run_dir):
-        return read_evidence_files(run_dir, ids, reread, max_chars)
+        return read_evidence_files(run_dir, ids, reread, max_chars, offset, reuse_ids)
 
 
 def read_evidence_files(run_dir: str, ids: list[int], reread: bool,
-                        max_chars: int) -> dict:
-    if max_chars < 1 or not ids:
-        raise ValueError('provide IDs and positive max_chars')
+                        max_chars: int, offset: int = 0,
+                        reuse_ids: list[int] | None = None) -> dict:
+    if max_chars < 1 or offset < 0 or not ids:
+        raise ValueError('provide IDs, positive max_chars and nonnegative offset')
     run = Path(run_dir)
     handoff = load_handoff((run/'handoff.json').read_bytes())
     metadata = json.loads((run/'metrics.json').read_text())
     entries = [(category,item) for category in ('primary','related') for item in handoff[category]]
     selected = dict(handoff, primary=[], related=[])
+    valid_ids, errors = [], []
+    sources = {}
     for i in sorted(set(ids)):
         if i < 1 or i > len(entries):
-            raise ValueError(f'unknown evidence ID {i}')
+            errors.append(dict(id=i, error=f'unknown evidence ID {i}'))
+            continue
         category,item = entries[i-1]
-        selected[category].append(item)
-    state_path = run/'read_state.json'
-    state = json.loads(state_path.read_text()) if state_path.exists() else {
-        'read': navigation_read_ranges(run, Path(metadata['repo'])), 'selections': {}}
-    key = ','.join(map(str,sorted(set(ids))))
-    selections = state['selections']
-    new_selection = key not in selections or reread
-    verified = verify_handoff(Path(metadata['repo']), selected, include_source=new_selection)
-    if new_selection:
-        blocks = evidence_blocks(verified, [] if reread else state['read'])
-        selections[key] = dict(text=format_evidence(verified, blocks, include_facts=False), offset=0, covered=0,
-                               ranges=[{k:v for k,v in block.items() if k != 'source'} for block in blocks])
-    selection = selections[key]
-    source = selection['text']
-    offset = int(selection['offset'])
+        try:
+            verified = verify_location(Path(metadata['repo']), item, sources, include_source=True)
+        except (EvidenceError, OSError) as error:
+            errors.append(dict(id=i, error=str(error)))
+            continue
+        selected[category].append(verified)
+        valid_ids.append(i)
+    read_ranges = []
+    if not reread:
+        read_ranges = navigation_read_ranges(run, Path(metadata['repo']))
+        for i in sorted(set(reuse_ids or [])):
+            if i < 1 or i > len(entries):
+                raise ValueError(f'unknown reuse ID {i}')
+            read_ranges.append(entries[i-1][1])
+    blocks = evidence_blocks(selected, read_ranges)
+    source = format_evidence(selected, blocks, include_facts=False)
+    restarted = bool(offset and errors)
+    if restarted:
+        offset = 0
+    if offset > len(source):
+        raise ValueError('offset must be within the text; keep the same selection and reuse arguments')
     end = min(offset+max_chars, len(source))
-    selection['offset'] = end
-    if offset <= selection['covered']:
-        selection['covered'] = max(selection['covered'], end)
-    if selection['covered'] == len(source):
-        for receipt in selection['ranges']:
-            if receipt not in state['read']:
-                state['read'].append(receipt)
-    state_path.write_text(json.dumps(state, ensure_ascii=False))
-    return dict(ids=ids, already_returned=offset==len(source),
-                text=source[offset:end],
-                total_chars=len(source), complete=end==len(source))
+    result = dict(ids=valid_ids, text=source[offset:end], offset=offset,
+                  total_chars=len(source), next_offset=end if end < len(source) else None)
+    if errors:
+        result['errors'] = errors
+    if restarted:
+        result['restarted'] = True
+    return result
 
 
 def navigation_read_ranges(run: Path, root: Path) -> list[dict]:

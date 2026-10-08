@@ -230,12 +230,13 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('The source is src/example.py.',request)
         full=read_evidence(str(run),[1])
         self.assertIn('    return 1',full['text'])
-        self.assertEqual(read_evidence(str(run),[1])['text'],'')
-        parts=[]
+        self.assertEqual(read_evidence(str(run),[1]),full)
+        parts, offset=[], 0
         while True:
-            page=read_evidence(str(run),[1],reread=not parts,max_chars=17)
+            page=read_evidence(str(run),[1],offset=offset,max_chars=17)
             parts.append(page['text'])
-            if page['complete']:break
+            offset=page['next_offset']
+            if offset is None:break
         self.assertEqual(''.join(parts),full['text'])
 
     async def test_index_pagination_preserves_ids_descriptions_and_unresolved(self):
@@ -326,7 +327,7 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(source.isError)
                 self.assertIn('    return 1',json.loads(source.content[0].text)['text'])
                 repeated=await session.call_tool('read_evidence',args)
-                self.assertTrue(json.loads(repeated.content[0].text)['already_returned'])
+                self.assertEqual(json.loads(repeated.content[0].text),json.loads(source.content[0].text))
 
     async def test_deadline_returns_failure_and_finalizes_usage(self):
         os.environ['FAKE_CASE']='timeout'
@@ -406,20 +407,26 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.space.delete()['deleted'], [self.ref])
         self.assertFalse(request.exists())
 
-    async def test_implicit_offset_resumes_and_id_order_is_stable(self):
+    async def test_explicit_offset_replays_and_id_order_is_stable(self):
         result=await self.run_collection();run=Path(result['run_dir'])
         handoff=json.loads((run/'handoff.json').read_text())
         handoff['related']=[dict(handoff['primary'][0],start=2)]
         (run/'handoff.json').write_text(json.dumps(handoff))
         first=read_evidence(str(run),[2,1],max_chars=20)
-        rest=read_evidence(str(run),[1,2])
+        self.assertEqual(first,read_evidence(str(run),[1,2],max_chars=20))
+        rest=read_evidence(str(run),[1,2],offset=first['next_offset'])
         full=read_evidence(str(run),[1,2],reread=True)
         self.assertEqual(first['text']+rest['text'],full['text'])
+        self.assertIsNone(rest['next_offset'])
+        self.assertFalse((run/'read_state.json').exists())
 
     async def test_read_rechecks_source(self):
         result=await self.run_collection()
         (self.repo/'src/example.py').write_text('changed\n')
-        with self.assertRaises(EvidenceError):read_evidence(result['run_dir'],[1])
+        page=read_evidence(result['run_dir'],[1])
+        self.assertEqual(page['ids'],[])
+        self.assertEqual(page['text'],'')
+        self.assertIn('stale_source',page['errors'][0]['error'])
 
     async def test_symbols_receipts_skip_only_matching_version_and_keep_patch_text(self):
         raw = 'def f():\r\n    return "日本語😀"'.encode()
@@ -446,11 +453,46 @@ class CollectionTests(unittest.IsolatedAsyncioTestCase):
         handoff['related'] = [dict(handoff['primary'][0],start=2,evidence='return value')]
         (run/'handoff.json').write_text(json.dumps(handoff))
         first = read_evidence(str(run),[2])
-        second = read_evidence(str(run),[1,2])
+        second = read_evidence(str(run),[1,2],reuse_ids=[2])
         self.assertIn('    return 1',first['text'])
         self.assertNotIn('    return 1',second['text'])
         self.assertIn('def f():',second['text'])
         self.assertNotIn('return value',second['text'])
+        self.assertEqual(second,read_evidence(str(run),[1,2],reuse_ids=[2]))
+        self.assertIn('    return 1',read_evidence(str(run),[1,2])['text'])
+
+    async def test_partial_batch_and_source_change_during_paging(self):
+        result=await self.run_collection(); run=Path(result['run_dir'])
+        handoff=json.loads((run/'handoff.json').read_text())
+        raw=b'def other():\n    return 2\n'
+        other=self.repo/'src/other.py'; other.write_bytes(raw)
+        handoff['related']=[dict(handoff['primary'][0],path='src/other.py',
+                                sha256=hashlib.sha256(raw).hexdigest())]
+        (run/'handoff.json').write_text(json.dumps(handoff))
+        first=read_evidence(str(run),[1,2],max_chars=12)
+        other.write_text('changed\n')
+        page=read_evidence(str(run),[1,2],offset=first['next_offset'],max_chars=12)
+        self.assertTrue(page['restarted'])
+        self.assertEqual(page['offset'],0)
+        self.assertEqual(page['ids'],[1])
+        self.assertEqual(page['errors'][0]['id'],2)
+        rest=read_evidence(str(run),page['ids'],offset=page['next_offset'])
+        self.assertEqual(page['text']+rest['text'],read_evidence(str(run),[1])['text'])
+        other.unlink()
+        partial=read_evidence(str(run),[1,2,99])
+        self.assertEqual(partial['ids'],[1])
+        self.assertEqual([e['id'] for e in partial['errors']],[2,99])
+        self.assertIn('    return 1',partial['text'])
+
+    async def test_invalid_range_does_not_hide_other_range_in_same_file(self):
+        result=await self.run_collection(); run=Path(result['run_dir'])
+        handoff=json.loads((run/'handoff.json').read_text())
+        handoff['related']=[dict(handoff['primary'][0],end=100)]
+        (run/'handoff.json').write_text(json.dumps(handoff))
+        page=read_evidence(str(run),[1,2])
+        self.assertEqual(page['ids'],[1])
+        self.assertIn('    return 1',page['text'])
+        self.assertEqual(page['errors'][0]['id'],2)
 
     async def test_partial_delivery_does_not_hide_unread_source_in_another_selection(self):
         result = await self.run_collection(); run = Path(result['run_dir'])
